@@ -5,6 +5,7 @@ import type { BootstrapResult, CreateRepoResponse, GitHubFile, GitHubFileContent
 export class GitHubService {
     private readonly baseUrl = 'https://api.github.com';
     private readonly headers: Record<string, string>;
+    private readonly templateRuleId = 'rule-901';
 
     constructor(
         private readonly config: Configuration,
@@ -35,37 +36,45 @@ export class GitHubService {
         return response.json() as Promise<CreateRepoResponse>;
     }
 
-    private async renameBranch(organization: string, repoName: string): Promise<void> {
-        const response = await fetch(`${this.baseUrl}/repos/${organization}/${repoName}/branches/main/rename`, {
-            method: 'POST',
-            headers: this.headers,
-            body: JSON.stringify({ new_name: this.config.GITHUB_DEFAULT_BRANCH }),
-        });
-
-        if (!response.ok) {
-            throw new Error(`Failed to rename branch: ${await response.text()}`);
-        }
-    }
-
-    private async deleteFile(organization: string, repoName: string, path: string): Promise<void> {
-        const getResponse = await fetch(
-            `${this.baseUrl}/repos/${organization}/${repoName}/contents/${path}?ref=${this.config.GITHUB_DEFAULT_BRANCH}`,
+    private async getMainBranchSha(organization: string, repoName: string): Promise<string> {
+        const response = await fetch(
+            `${this.baseUrl}/repos/${organization}/${repoName}/git/ref/heads/main`,
             { headers: this.headers }
         );
 
-        if (!getResponse.ok) return;
+        if (!response.ok) {
+            throw new Error(`Failed to get main branch SHA: ${await response.text()}`);
+        }
 
-        const { sha } = (await getResponse.json()) as { sha: string };
+        const data = (await response.json()) as { object: { sha: string } };
+        return data.object.sha;
+    }
 
-        await fetch(`${this.baseUrl}/repos/${organization}/${repoName}/contents/${path}`, {
-            method: 'DELETE',
+    private async createBranch(organization: string, repoName: string, sha: string): Promise<void> {
+        const response = await fetch(`${this.baseUrl}/repos/${organization}/${repoName}/git/refs`, {
+            method: 'POST',
             headers: this.headers,
             body: JSON.stringify({
-                message: `Remove ${path}`,
+                ref: `refs/heads/${this.config.GITHUB_DEFAULT_BRANCH}`,
                 sha,
-                branch: this.config.GITHUB_DEFAULT_BRANCH,
             }),
         });
+
+        if (!response.ok) {
+            throw new Error(`Failed to create branch: ${await response.text()}`);
+        }
+    }
+
+    private async setDefaultBranch(organization: string, repoName: string): Promise<void> {
+        const response = await fetch(`${this.baseUrl}/repos/${organization}/${repoName}`, {
+            method: 'PATCH',
+            headers: this.headers,
+            body: JSON.stringify({ default_branch: this.config.GITHUB_DEFAULT_BRANCH }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to set default branch: ${await response.text()}`);
+        }
     }
 
     private async getTemplateFiles(path = ''): Promise<GitHubFile[]> {
@@ -114,16 +123,81 @@ export class GitHubService {
         }
     }
 
-    private async copyTemplateFiles(organization: string, repoName: string, path = ''): Promise<void> {
+    private shouldSkipFile(path: string): boolean {
+        if (path === '__tests__' || path.startsWith('__tests__/')) return true;
+        if (path === 'README.md') return true;
+        if (path === `src/${this.templateRuleId}.ts`) return true;
+        return false;
+    }
+
+    private replaceRuleId(content: string, newRuleId: string, organization: string): string {
+        const decoded = Buffer.from(content, 'base64').toString('utf-8');
+        const replaced = decoded
+            .replace(new RegExp(this.templateRuleId, 'g'), `rule-${newRuleId}`)
+            .replace(/tazama-lf\/rule-901/g, `${organization}/rule-${newRuleId}`)
+            .replace(/@tazama-lf\/rule-901/g, `@${organization}/rule-${newRuleId}`);
+        return Buffer.from(replaced).toString('base64');
+    }
+
+    private updatePackageJson(content: string, ruleId: string, ruleVersion: string, organization: string): string {
+        const decoded = Buffer.from(content, 'base64').toString('utf-8');
+        const pkg = JSON.parse(decoded);
+
+        pkg.name = `@${organization}/rule-${ruleId}`;
+        pkg.version = ruleVersion;
+        pkg.description = `Rule ${ruleId}`;
+        pkg.repository.url = `git+https://github.com/${organization}/rule-${ruleId}.git`;
+        pkg.bugs.url = `https://github.com/${organization}/rule-${ruleId}/issues`;
+        pkg.homepage = `https://github.com/${organization}/rule-${ruleId}#readme`;
+        pkg.publishConfig = {
+            [`@${organization}:registry`]: 'https://npm.pkg.github.com/',
+            access: 'public',
+        };
+
+        return Buffer.from(JSON.stringify(pkg, null, 2)).toString('base64');
+    }
+
+    private getTargetPath(originalPath: string, newRuleId: string): string {
+        if (originalPath === `src/${this.templateRuleId}.ts`) {
+            return `src/rule-${newRuleId}.ts`;
+        }
+        return originalPath;
+    }
+
+    private needsRuleIdReplacement(path: string): boolean {
+        return path === 'src/index.ts' || path === 'package-lock.json';
+    }
+
+    private async copyTemplateFiles(
+        organization: string,
+        repoName: string,
+        ruleId: string,
+        ruleVersion: string,
+        path = ''
+    ): Promise<void> {
         const files = await this.getTemplateFiles(path);
 
         for (const file of files) {
+            if (this.shouldSkipFile(file.path)) {
+                this.logger.log(`Skipped: ${file.path}`);
+                continue;
+            }
+
             if (file.type === 'dir') {
-                await this.copyTemplateFiles(organization, repoName, file.path);
+                await this.copyTemplateFiles(organization, repoName, ruleId, ruleVersion, file.path);
             } else if (file.type === 'file') {
                 const content = await this.getFileContent(file.path);
-                await this.createFile(organization, repoName, file.path, content.content);
-                this.logger.log(`Copied: ${file.path}`);
+                let fileContent = content.content;
+                let targetPath = this.getTargetPath(file.path, ruleId);
+
+                if (file.name === 'package.json') {
+                    fileContent = this.updatePackageJson(fileContent, ruleId, ruleVersion, organization);
+                } else if (this.needsRuleIdReplacement(file.path)) {
+                    fileContent = this.replaceRuleId(fileContent, ruleId, organization);
+                }
+
+                await this.createFile(organization, repoName, targetPath, fileContent);
+                this.logger.log(`Copied: ${file.path} -> ${targetPath}`);
             }
         }
     }
@@ -136,15 +210,14 @@ export class GitHubService {
             const repo = await this.createRepository(repoName, organization);
 
             if (this.config.GITHUB_DEFAULT_BRANCH !== 'main') {
-                this.logger.log(`Renaming branch to ${this.config.GITHUB_DEFAULT_BRANCH}`);
-                await this.renameBranch(organization, repoName);
+                this.logger.log(`Creating ${this.config.GITHUB_DEFAULT_BRANCH} branch`);
+                const mainSha = await this.getMainBranchSha(organization, repoName);
+                await this.createBranch(organization, repoName, mainSha);
+                await this.setDefaultBranch(organization, repoName);
             }
 
-            this.logger.log(`Removing default README`);
-            await this.deleteFile(organization, repoName, 'README.md');
-
             this.logger.log(`Copying template files from ${this.config.GITHUB_TEMPLATE_OWNER}/${this.config.GITHUB_TEMPLATE_REPO}`);
-            await this.copyTemplateFiles(organization, repoName);
+            await this.copyTemplateFiles(organization, repoName, ruleId, ruleVersion);
 
             return {
                 success: true,
