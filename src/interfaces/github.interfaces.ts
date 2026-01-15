@@ -13,3 +13,15 @@ export interface BootstrapBody {
     ruleVersion: string;
     organization: string;
 }
+
+export interface GitHubFile {
+    name: string;
+    path: string;
+    sha: string;
+    type: 'file' | 'dir';
+}
+
+export interface GitHubFileContent {
+    content: string;
+    encoding: string;
+}

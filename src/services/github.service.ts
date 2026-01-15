@@ -1,6 +1,6 @@
 import type { LoggerService } from '@tazama-lf/frms-coe-lib';
 import type { Configuration } from '../config';
-import type { BootstrapResult, CreateRepoResponse } from '../interfaces/github.interfaces';
+import type { BootstrapResult, CreateRepoResponse, GitHubFile, GitHubFileContent } from '../interfaces/github.interfaces';
 
 export class GitHubService {
     private readonly baseUrl = 'https://api.github.com';
@@ -24,7 +24,7 @@ export class GitHubService {
             body: JSON.stringify({
                 name,
                 private: true,
-                auto_init: false,
+                auto_init: true,
             }),
         });
 
@@ -35,46 +35,96 @@ export class GitHubService {
         return response.json() as Promise<CreateRepoResponse>;
     }
 
-    private async getTemplateCommitSha(): Promise<string> {
+    private async renameBranch(organization: string, repoName: string): Promise<void> {
+        const response = await fetch(`${this.baseUrl}/repos/${organization}/${repoName}/branches/main/rename`, {
+            method: 'POST',
+            headers: this.headers,
+            body: JSON.stringify({ new_name: this.config.GITHUB_DEFAULT_BRANCH }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to rename branch: ${await response.text()}`);
+        }
+    }
+
+    private async deleteFile(organization: string, repoName: string, path: string): Promise<void> {
+        const getResponse = await fetch(
+            `${this.baseUrl}/repos/${organization}/${repoName}/contents/${path}?ref=${this.config.GITHUB_DEFAULT_BRANCH}`,
+            { headers: this.headers }
+        );
+
+        if (!getResponse.ok) return;
+
+        const { sha } = (await getResponse.json()) as { sha: string };
+
+        await fetch(`${this.baseUrl}/repos/${organization}/${repoName}/contents/${path}`, {
+            method: 'DELETE',
+            headers: this.headers,
+            body: JSON.stringify({
+                message: `Remove ${path}`,
+                sha,
+                branch: this.config.GITHUB_DEFAULT_BRANCH,
+            }),
+        });
+    }
+
+    private async getTemplateFiles(path = ''): Promise<GitHubFile[]> {
         const { GITHUB_TEMPLATE_OWNER, GITHUB_TEMPLATE_REPO, GITHUB_DEFAULT_BRANCH } = this.config;
 
         const response = await fetch(
-            `${this.baseUrl}/repos/${GITHUB_TEMPLATE_OWNER}/${GITHUB_TEMPLATE_REPO}/git/ref/heads/${GITHUB_DEFAULT_BRANCH}`,
+            `${this.baseUrl}/repos/${GITHUB_TEMPLATE_OWNER}/${GITHUB_TEMPLATE_REPO}/contents/${path}?ref=${GITHUB_DEFAULT_BRANCH}`,
             { headers: this.headers }
         );
 
         if (!response.ok) {
-            throw new Error(`Failed to get template commit SHA: ${await response.text()}`);
+            throw new Error(`Failed to get template files: ${await response.text()}`);
         }
 
-        const data = (await response.json()) as { object: { sha: string } };
-        return data.object.sha;
+        return response.json() as Promise<GitHubFile[]>;
     }
 
-    private async createBranchFromCommit(organization: string, repoName: string, sha: string): Promise<void> {
-        const response = await fetch(`${this.baseUrl}/repos/${organization}/${repoName}/git/refs`, {
-            method: 'POST',
+    private async getFileContent(path: string): Promise<GitHubFileContent> {
+        const { GITHUB_TEMPLATE_OWNER, GITHUB_TEMPLATE_REPO, GITHUB_DEFAULT_BRANCH } = this.config;
+
+        const response = await fetch(
+            `${this.baseUrl}/repos/${GITHUB_TEMPLATE_OWNER}/${GITHUB_TEMPLATE_REPO}/contents/${path}?ref=${GITHUB_DEFAULT_BRANCH}`,
+            { headers: this.headers }
+        );
+
+        if (!response.ok) {
+            throw new Error(`Failed to get file: ${await response.text()}`);
+        }
+
+        return response.json() as Promise<GitHubFileContent>;
+    }
+
+    private async createFile(organization: string, repoName: string, path: string, content: string): Promise<void> {
+        const response = await fetch(`${this.baseUrl}/repos/${organization}/${repoName}/contents/${path}`, {
+            method: 'PUT',
             headers: this.headers,
             body: JSON.stringify({
-                ref: `refs/heads/${this.config.GITHUB_DEFAULT_BRANCH}`,
-                sha,
+                message: `Add ${path}`,
+                content,
+                branch: this.config.GITHUB_DEFAULT_BRANCH,
             }),
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to create branch: ${await response.text()}`);
+            throw new Error(`Failed to create file ${path}: ${await response.text()}`);
         }
     }
 
-    private async setDefaultBranch(organization: string, repoName: string): Promise<void> {
-        const response = await fetch(`${this.baseUrl}/repos/${organization}/${repoName}`, {
-            method: 'PATCH',
-            headers: this.headers,
-            body: JSON.stringify({ default_branch: this.config.GITHUB_DEFAULT_BRANCH }),
-        });
+    private async copyTemplateFiles(organization: string, repoName: string, path = ''): Promise<void> {
+        const files = await this.getTemplateFiles(path);
 
-        if (!response.ok) {
-            throw new Error(`Failed to set default branch: ${await response.text()}`);
+        for (const file of files) {
+            if (file.type === 'dir') {
+                await this.copyTemplateFiles(organization, repoName, file.path);
+            } else if (file.type === 'file') {
+                const content = await this.getFileContent(file.path);
+                await this.createFile(organization, repoName, file.path, content.content);
+                this.logger.log(`Copied: ${file.path}`);
+            }
         }
     }
 
@@ -85,12 +135,16 @@ export class GitHubService {
             this.logger.log(`Creating repository ${organization}/${repoName}`);
             const repo = await this.createRepository(repoName, organization);
 
-            this.logger.log(`Creating ${this.config.GITHUB_DEFAULT_BRANCH} branch from template`);
-            const templateSha = await this.getTemplateCommitSha();
-            await this.createBranchFromCommit(organization, repoName, templateSha);
+            if (this.config.GITHUB_DEFAULT_BRANCH !== 'main') {
+                this.logger.log(`Renaming branch to ${this.config.GITHUB_DEFAULT_BRANCH}`);
+                await this.renameBranch(organization, repoName);
+            }
 
-            this.logger.log(`Setting default branch to ${this.config.GITHUB_DEFAULT_BRANCH}`);
-            await this.setDefaultBranch(organization, repoName);
+            this.logger.log(`Removing default README`);
+            await this.deleteFile(organization, repoName, 'README.md');
+
+            this.logger.log(`Copying template files from ${this.config.GITHUB_TEMPLATE_OWNER}/${this.config.GITHUB_TEMPLATE_REPO}`);
+            await this.copyTemplateFiles(organization, repoName);
 
             return {
                 success: true,
