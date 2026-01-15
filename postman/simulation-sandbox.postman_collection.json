@@ -1,0 +1,38 @@
+{
+  "info": {
+    "name": "Simulation Sandbox API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Bootstrap Rule Repository",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ruleId\": \"rule-021\",\n  \"ruleVersion\": \"1.0.0\",\n  \"organization\": \"psl-copilot\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/bootstrap"
+      }
+    }
+  ]
+}
