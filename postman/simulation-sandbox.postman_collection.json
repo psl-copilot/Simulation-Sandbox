@@ -14,7 +14,7 @@
       "name": "Health Check",
       "request": {
         "method": "GET",
-        "url": "{{baseUrl}}/health"
+        "url": "{{baseUrl}}/api/health"
       }
     },
     {
@@ -29,9 +29,26 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"ruleId\": \"rule-021\",\n  \"ruleVersion\": \"1.0.0\",\n  \"organization\": \"psl-copilot\"\n}"
+          "raw": "{\n  \"ruleId\": \"021\",\n  \"ruleVersion\": \"1.0.0\",\n  \"organization\": \"psl-copilot\"\n}"
         },
         "url": "{{baseUrl}}/api/v1/bootstrap"
+      }
+    },
+    {
+      "name": "Populate Rule Repository",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"organization\": \"psl-copilot\",\n  \"ruleId\": \"021\",\n  \"ruleCode\": \"Ly8gU1BEWC1MaWNlbnNlLUlkZW50aWZpZXI6IEFwYWNoZS0yLjAKCmV4cG9ydCBjb25zdCBoZWxsbyA9ICgpID0+ICdIZWxsbyBXb3JsZCc7Cg==\",\n  \"testCode\": \"aW1wb3J0IHsgaGVsbG8gfSBmcm9tICcuLi8uLi9zcmMvcnVsZS0wMjEnOwoKZGVzY3JpYmUoJ3J1bGUtMDIxJywgKCkgPT4gewogIHRlc3QoJ2hlbGxvJywgKCkgPT4gewogICAgZXhwZWN0KGhlbGxvKCkpLnRvQmUoJ0hlbGxvIFdvcmxkJyk7CiAgfSk7Cn0pOwo=\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/populate"
       }
     }
   ]

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { LoggerService } from '@tazama-lf/frms-coe-lib';
 import { validateProcessorConfig } from '@tazama-lf/frms-coe-lib/lib/config';
 import { additionalEnvironmentVariables, type Configuration } from './config';
-import { bootstrapRoutes } from './routes/bootstrap.routes';
+import { createRouter } from './router';
 
 class App {
   private readonly logger: LoggerService;
@@ -16,8 +16,7 @@ class App {
   }
 
   private async start(): Promise<void> {
-    this.server.get('/health', async () => ({ status: 'ok' }));
-    await this.server.register(bootstrapRoutes(this.config, this.logger), { prefix: '/api/v1' });
+    await this.server.register(createRouter(this.config, this.logger), { prefix: '/api' });
 
     const host = process.env.HOST || '0.0.0.0';
     const port = Number(process.env.PORT) || 3000;
