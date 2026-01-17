@@ -1,1 +1,1 @@
-export { GitHubFile } from './github.interfaces';
+export type { GitHubFile } from './github.interfaces';

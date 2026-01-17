@@ -9,7 +9,7 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 
 export default defineConfig([
   eslintConfigPrettier,
-  globalIgnores(['**/coverage/**', '**/build/**', '**/node_modules/**', '**/__tests__/**', '*.ts', '**/dist/**', '**/*.spec.ts', '**/jest.config.ts']),
+  globalIgnores(['**/coverage/**', '**/build/**','**/dist/**', '**/node_modules/**', '**/__tests__/**', '*.ts']),
   {
     files: ['**/*.ts'],
     plugins: {
@@ -38,7 +38,7 @@ export default defineConfig([
       '@typescript-eslint/no-non-null-assertion': 'off',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-floating-promises': 'off',
-      '@typescript-eslint/no-magic-numbers': ['warn', { ignore: [0, 1] }],
+      '@typescript-eslint/no-magic-numbers': 'off',
       '@typescript-eslint/no-misused-spread': 'off',
       '@typescript-eslint/no-var-requires': 'off',
       '@typescript-eslint/no-unsafe-type-assertion': 'off',

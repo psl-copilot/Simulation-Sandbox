@@ -1,136 +1,214 @@
-import type { LoggerService } from '@tazama-lf/frms-coe-lib';
-import type { Configuration } from '../config';
-import type { BootstrapResponse, PopulateResponse } from '../schemas';
+import type { BootstrapBody, PopulateBody } from '../schemas';
 import type { GitHubFile } from '../interfaces';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import { configuration, loggerService } from '../index';
 
-export class GitHubService {
-    private readonly api = 'https://api.github.com';
-    private readonly headers: Record<string, string>;
-    private readonly placeholder = 'rule-901';
+const getGitHubApiConfig = (): { api: string; headers: Record<string, string> } => ({
+  api: 'https://api.github.com',
+  headers: {
+    Authorization: `Bearer ${configuration.GITHUB_TOKEN}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  },
+});
 
-    constructor(private readonly config: Configuration, private readonly logger: LoggerService) {
-        this.headers = {
-            Authorization: `Bearer ${config.GITHUB_TOKEN}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-        };
-    }
+const getRepoName = (ruleId: string): string => `rule-${ruleId}`;
 
-    private async request<T>(url: string, options?: RequestInit): Promise<T> {
-        const res = await fetch(url, { headers: this.headers, ...options });
-        if (!res.ok) throw new Error(await res.text());
-        return res.json() as Promise<T>;
-    }
+const handleError = (error: unknown, reply: FastifyReply): void => {
+  const message = error instanceof Error ? error.message : String(error);
+  loggerService.error(message);
+  reply.status(500).send({ success: false, message });
+};
 
-    private async copyFiles(org: string, repo: string, ruleId: string, path = ''): Promise<void> {
-        const { GITHUB_TEMPLATE_OWNER: owner, GITHUB_TEMPLATE_REPO: tmpl, GITHUB_DEFAULT_BRANCH: branch } = this.config;
-        const files = await this.request<GitHubFile[]>(`${this.api}/repos/${owner}/${tmpl}/contents/${path}?ref=${branch}`);
+export const bootstrapHandler = async (
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> => {
+  try {
+    const { ruleId, ruleVersion, organization } = request.body as BootstrapBody;
+    const { api, headers } = getGitHubApiConfig();
+    const repo = getRepoName(ruleId);
+    const branch = configuration.GITHUB_DEFAULT_BRANCH;
 
-        for (const file of files) {
-            if (file.type === 'dir') {
-                await this.copyFiles(org, repo, ruleId, file.path);
-                continue;
-            }
+    const createRes = await fetch(`${api}/orgs/${organization}/repos`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: repo,
+        private: false,
+        default_branch: branch,
+      }),
+    });
+    if (!createRes.ok) throw new Error(await createRes.text());
+    const { html_url: htmlUrl } = (await createRes.json()) as { html_url: string };
 
-            const { content } = await this.request<{ content: string }>(
-                `${this.api}/repos/${owner}/${tmpl}/contents/${file.path}?ref=${branch}`
-            );
-            
-            const targetPath = file.path.replace(this.placeholder, `rule-${ruleId}`);
-            const needsReplace = ['package.json', 'package-lock.json', 'src/index.ts'].includes(file.path) || file.path.includes(this.placeholder);
-            
-            const fileContent = needsReplace
-                ? Buffer.from(
-                    Buffer.from(content, 'base64')
-                        .toString()
-                        .replace(new RegExp(this.placeholder, 'g'), `rule-${ruleId}`)
-                        .replace(/tazama-lf/g, org)
-                  ).toString('base64')
-                : content;
+    loggerService.log(`Created: ${organization}/${repo}`);
+    await copyTemplateFiles(organization, repo, ruleVersion);
 
-            await this.request(`${this.api}/repos/${org}/${repo}/contents/${targetPath}`, {
-                method: 'PUT',
-                body: JSON.stringify({ message: `Add ${targetPath}`, content: fileContent, branch }),
-            });
-            
-            this.logger.log(`Copied: ${file.path}`);
-        }
-    }
+    reply.status(200).send({
+      success: true,
+      repoUrl: htmlUrl,
+      message: `Created ${organization}/${repo} v${ruleVersion}`,
+    });
+  } catch (error) {
+    handleError(error, reply);
+  }
+};
 
-    async bootstrap(ruleId: string, ruleVersion: string, org: string): Promise<BootstrapResponse> {
-        const repo = `rule-${ruleId}`;
-        const branch = this.config.GITHUB_DEFAULT_BRANCH;
-        
-        try {
-            const { html_url } = await this.request<{ html_url: string }>(
-                `${this.api}/orgs/${org}/repos`,
-                { method: 'POST', body: JSON.stringify({ name: repo, private: true }) }
-            );
-            this.logger.log(`Created: ${org}/${repo}`);
-            
-            await this.copyFiles(org, repo, ruleId);
-            
-            await this.request(`${this.api}/repos/${org}/${repo}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ default_branch: branch }),
-            });
-            
-            return { success: true, repoUrl: html_url, message: `Created ${org}/${repo} v${ruleVersion}` };
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.logger.error(message);
-            return { success: false, message };
-        }
-    }
+export const populateHandler = async (
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> => {
+  try {
+    const { organization, ruleId, ruleCode, testCode } = request.body as PopulateBody;
+    const { api, headers } = getGitHubApiConfig();
+    const repo = getRepoName(ruleId);
+    const branch = configuration.GITHUB_DEFAULT_BRANCH;
+    const rulePath = 'src/rule.ts';
+    const testPath = '__tests__/unit/rule.test.ts';
 
-    async populate(org: string, ruleId: string, ruleCode: string, testCode: string): Promise<PopulateResponse> {
-        const repo = `rule-${ruleId}`;
-        const branch = this.config.GITHUB_DEFAULT_BRANCH;
+    const ruleFile = await getFileSha(organization, repo, rulePath, branch);
+    await fetch(`${api}/repos/${organization}/${repo}/contents/${rulePath}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: `Update ${rulePath}`,
+        content: ruleCode,
+        branch,
+        ...(ruleFile && { sha: ruleFile }),
+      }),
+    });
+    loggerService.log(`Created: ${rulePath}`);
 
-        try {
-            const rulePath = `src/rule-${ruleId}.ts`;
-            const testPath = `__tests__/unit/rule.test.ts`;
+    const testFile = await getFileSha(organization, repo, testPath, branch);
+    await fetch(`${api}/repos/${organization}/${repo}/contents/${testPath}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: `Update ${testPath}`,
+        content: testCode,
+        branch,
+        ...(testFile && { sha: testFile }),
+      }),
+    });
+    loggerService.log(`Created: ${testPath}`);
 
-            const ruleFile = await this.getFileSha(org, repo, rulePath, branch);
-            await this.request(`${this.api}/repos/${org}/${repo}/contents/${rulePath}`, {
-                method: 'PUT',
-                body: JSON.stringify({
-                    message: `Update ${rulePath}`,
-                    content: ruleCode,
-                    branch,
-                    ...(ruleFile && { sha: ruleFile }),
-                }),
-            });
-            this.logger.log(`Updated: ${rulePath}`);
+    reply.status(200).send({ success: true, message: `Populated ${organization}/${repo}` });
+  } catch (error) {
+    handleError(error, reply);
+  }
+};
 
-            const testFile = await this.getFileSha(org, repo, testPath, branch);
-            await this.request(`${this.api}/repos/${org}/${repo}/contents/${testPath}`, {
-                method: 'PUT',
-                body: JSON.stringify({
-                    message: `Update ${testPath}`,
-                    content: testCode,
-                    branch,
-                    ...(testFile && { sha: testFile }),
-                }),
-            });
-            this.logger.log(`Updated: ${testPath}`);
+async function copyTemplateFiles(
+  org: string,
+  repo: string,
+  ruleVersion: string,
+  path = ''
+): Promise<void> {
+  const { api, headers } = getGitHubApiConfig();
+  const {
+    GITHUB_TEMPLATE_OWNER: owner,
+    GITHUB_TEMPLATE_REPO: tmpl,
+    GITHUB_DEFAULT_BRANCH: branch,
+  } = configuration;
 
-            return { success: true, message: `Populated ${org}/${repo}` };
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.logger.error(message);
-            return { success: false, message };
-        }
-    }
+  const res = await fetch(`${api}/repos/${owner}/${tmpl}/contents/${path}?ref=${branch}`, {
+    headers,
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch template contents: ${await res.text()}`);
+  }
+  const files = (await res.json()) as GitHubFile[];
 
-    private async getFileSha(org: string, repo: string, path: string, branch: string): Promise<string | undefined> {
-        try {
-            const res = await fetch(`${this.api}/repos/${org}/${repo}/contents/${path}?ref=${branch}`, { headers: this.headers });
-            if (!res.ok) return undefined;
-            const { sha } = await res.json() as { sha: string };
-            return sha;
-        } catch {
-            return undefined;
-        }
-    }
+  const directoryPromises = files
+    .filter((file) => file.type === 'dir')
+    .map(async (file) => {
+      await copyTemplateFiles(org, repo, ruleVersion, file.path);
+    });
+
+  await Promise.all(directoryPromises);
+
+  const filePromises = files
+    .filter((file) => file.type === 'file')
+    .map(async (file) => {
+      const contentRes = await fetch(
+        `${api}/repos/${owner}/${tmpl}/contents/${file.path}?ref=${branch}`,
+        { headers }
+      );
+
+      if (!contentRes.ok) {
+        const errorText = await contentRes.text();
+        throw new Error(`Failed to fetch content for ${file.path}: ${errorText}`);
+      }
+
+      const { content } = (await contentRes.json()) as { content: string };
+
+      let processedContent = content;
+      if (file.path === 'package.json') {
+        const packageContent = Buffer.from(content, 'base64').toString();
+        const updatedContent = packageContent
+          .replaceAll('@org_name/repoName', `@${org}/${repo}`)
+          .replaceAll('$version', ruleVersion);
+        processedContent = Buffer.from(updatedContent).toString('base64');
+      }
+
+      const existingFileRes = await fetch(`${api}/repos/${org}/${repo}/contents/${file.path}`, {
+        headers,
+      });
+
+      let sha: string | undefined;
+      if (existingFileRes.ok) {
+        const { sha: fileSha } = (await existingFileRes.json()) as { sha: string };
+        sha = fileSha;
+      }
+
+      const createBody: {
+        message: string;
+        content: string;
+        branch: string;
+        sha?: string;
+      } = {
+        message: `Add ${file.path}`,
+        content: processedContent,
+        branch,
+      };
+
+      if (sha) {
+        createBody.sha = sha;
+      }
+
+      const createRes = await fetch(`${api}/repos/${org}/${repo}/contents/${file.path}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(createBody),
+      });
+
+      if (!createRes.ok) {
+        const errorText = await createRes.text();
+        throw new Error(`Failed to create file ${file.path}: ${errorText}`);
+      }
+
+      loggerService.log(`Added: ${file.path}`);
+    });
+
+  await Promise.all(filePromises);
+}
+
+async function getFileSha(
+  org: string,
+  repo: string,
+  path: string,
+  branch: string
+): Promise<string | undefined> {
+  const { api, headers } = getGitHubApiConfig();
+  try {
+    const res = await fetch(`${api}/repos/${org}/${repo}/contents/${path}?ref=${branch}`, {
+      headers,
+    });
+    if (!res.ok) return undefined;
+    const { sha } = (await res.json()) as { sha: string };
+    return sha;
+  } catch {
+    return undefined;
+  }
 }
