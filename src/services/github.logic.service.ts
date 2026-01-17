@@ -128,9 +128,12 @@ async function copyTemplateFiles(
 
   await Promise.all(directoryPromises);
 
-  const filePromises = files
-    .filter((file) => file.type === 'file')
-    .map(async (file) => {
+  const fileList = files.filter((file) => file.type === 'file');
+
+  await fileList.reduce(async (previousPromise, file) => {
+    await previousPromise;
+
+    try {
       const contentRes = await fetch(
         `${api}/repos/${owner}/${tmpl}/contents/${file.path}?ref=${branch}`,
         { headers }
@@ -185,13 +188,25 @@ async function copyTemplateFiles(
 
       if (!createRes.ok) {
         const errorText = await createRes.text();
+        const errorData = JSON.parse(errorText) as { message?: string };
+
+        if (createRes.status === 409 && errorData.message?.includes('reference already exists')) {
+          loggerService.log(`File already exists, skipping: ${file.path}`);
+          return;
+        }
+
         throw new Error(`Failed to create file ${file.path}: ${errorText}`);
       }
 
       loggerService.log(`Added: ${file.path}`);
-    });
-
-  await Promise.all(filePromises);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('reference already exists')) {
+        loggerService.log(`File already exists, skipping: ${file.path}`);
+        return;
+      }
+      throw error;
+    }
+  }, Promise.resolve());
 }
 
 async function getFileSha(

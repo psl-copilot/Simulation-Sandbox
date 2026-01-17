@@ -328,5 +328,102 @@ describe('GitHub Logic Service', () => {
         message: 'Populated test-org/rule-123',
       });
     });
+
+    it('should handle file already exists error during bootstrap', async () => {
+      const request = createMockRequest({
+        ruleId: '123',
+        ruleVersion: '1.0.0',
+        organization: 'test-org',
+      });
+      const reply = createMockReply();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ name: 'test.txt', path: 'test.txt', type: 'file' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ content: 'dGVzdA==' }),
+        })
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          text: async () => JSON.stringify({ message: 'reference already exists' }),
+        });
+
+      await bootstrapHandler(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('should handle JSON parse error in file creation', async () => {
+      const request = createMockRequest({
+        ruleId: '123',
+        ruleVersion: '1.0.0',
+        organization: 'test-org',
+      });
+      const reply = createMockReply();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ name: 'test.txt', path: 'test.txt', type: 'file' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ content: 'dGVzdA==' }),
+        })
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 422,
+          text: async () => 'invalid json',
+        });
+
+      await bootstrapHandler(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle error thrown during file processing', async () => {
+      const request = createMockRequest({
+        ruleId: '123',
+        ruleVersion: '1.0.0',
+        organization: 'test-org',
+      });
+      const reply = createMockReply();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ name: 'test.txt', path: 'test.txt', type: 'file' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ content: 'dGVzdA==' }),
+        })
+        .mockResolvedValueOnce({ ok: false })
+        .mockImplementationOnce(() => {
+          throw new Error('reference already exists');
+        });
+
+      await bootstrapHandler(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+    });
   });
 });
