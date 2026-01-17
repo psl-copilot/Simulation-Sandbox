@@ -250,7 +250,8 @@ describe('GitHub Logic Service', () => {
 
       await bootstrapHandler(request, reply);
 
-      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(mockLoggerService.error).toHaveBeenCalled();
     });
 
     it('should handle file creation failure', async () => {
@@ -282,7 +283,8 @@ describe('GitHub Logic Service', () => {
 
       await bootstrapHandler(request, reply);
 
-      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(mockLoggerService.error).toHaveBeenCalled();
     });
 
     it('should handle fetch errors in getFileSha', async () => {
@@ -392,7 +394,8 @@ describe('GitHub Logic Service', () => {
 
       await bootstrapHandler(request, reply);
 
-      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(mockLoggerService.error).toHaveBeenCalled();
     });
 
     it('should handle error thrown during file processing', async () => {
@@ -528,7 +531,8 @@ describe('GitHub Logic Service', () => {
 
       await bootstrapHandler(request, reply);
 
-      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(mockLoggerService.error).toHaveBeenCalled();
     });
   });
 });

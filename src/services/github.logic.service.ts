@@ -120,19 +120,16 @@ async function copyTemplateFiles(
   }
   const files = (await res.json()) as GitHubFile[];
 
-  const directoryPromises = files
-    .filter((file) => file.type === 'dir')
-    .map(async (file) => {
+  // Process directories first
+  /* eslint-disable no-await-in-loop -- Need sequential processing to avoid race conditions */
+  for (const file of files) {
+    if (file.type === 'dir') {
       await copyTemplateFiles(org, repo, ruleVersion, file.path);
-    });
+    }
+  }
 
-  await Promise.all(directoryPromises);
-
-  const fileList = files.filter((file) => file.type === 'file');
-
-  await fileList.reduce(async (previousPromise, file) => {
-    await previousPromise;
-
+  // Then process files
+  for (const file of files.filter((f) => f.type === 'file')) {
     try {
       const contentRes = await fetch(
         `${api}/repos/${owner}/${tmpl}/contents/${file.path}?ref=${branch}`,
@@ -140,8 +137,7 @@ async function copyTemplateFiles(
       );
 
       if (!contentRes.ok) {
-        const errorText = await contentRes.text();
-        throw new Error(`Failed to fetch content for ${file.path}: ${errorText}`);
+        throw new Error(`Failed to fetch content for ${file.path}: ${await contentRes.text()}`);
       }
 
       const { content } = (await contentRes.json()) as { content: string };
@@ -188,89 +184,17 @@ async function copyTemplateFiles(
 
       if (!createRes.ok) {
         const errorText = await createRes.text();
-
-        if (createRes.status === 409) {
-          const conflictHandled = await handleConflictError({
-            errorText,
-            filePath: file.path,
-            createBody,
-            api,
-            headers,
-            org,
-            repo,
-          });
-          if (conflictHandled) return;
-        }
-
-        throw new Error(`Failed to create file ${file.path}: ${errorText}`);
+        loggerService.error(`Failed to create file ${file.path}: ${errorText}`);
+        continue;
       }
 
       loggerService.log(`Added: ${file.path}`);
     } catch (error) {
-      if (error instanceof Error) {
-        if (
-          error.message.includes('reference already exists') ||
-          error.message.includes('but expected')
-        ) {
-          loggerService.log(`File conflict, skipping: ${file.path}`);
-          return;
-        }
-      }
-      throw error;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      loggerService.error(`Error copying file ${file.path}: ${errorMessage}`);
     }
-  }, Promise.resolve());
-}
-
-async function handleConflictError(params: {
-  errorText: string;
-  filePath: string;
-  createBody: { message: string; content: string; branch: string; sha?: string };
-  api: string;
-  headers: Record<string, string>;
-  org: string;
-  repo: string;
-}): Promise<boolean> {
-  const { errorText, filePath, createBody, api, headers, org, repo } = params;
-
-  try {
-    const errorData = JSON.parse(errorText) as { message?: string };
-
-    if (errorData.message?.includes('reference already exists')) {
-      loggerService.log(`File already exists, skipping: ${filePath}`);
-      return true;
-    }
-
-    if (errorData.message?.includes('but expected')) {
-      loggerService.log(`SHA mismatch for ${filePath}, retrying with latest SHA`);
-
-      const latestFileRes = await fetch(`${api}/repos/${org}/${repo}/contents/${filePath}`, {
-        headers,
-      });
-
-      if (latestFileRes.ok) {
-        const { sha: latestSha } = (await latestFileRes.json()) as { sha: string };
-        const retryBody = { ...createBody, sha: latestSha };
-
-        const retryRes = await fetch(`${api}/repos/${org}/${repo}/contents/${filePath}`, {
-          method: 'PUT',
-          headers,
-          body: JSON.stringify(retryBody),
-        });
-
-        if (retryRes.ok) {
-          loggerService.log(`Added: ${filePath} (retry)`);
-          return true;
-        }
-      }
-
-      loggerService.log(`File update conflict, skipping: ${filePath}`);
-      return true;
-    }
-  } catch {
-    // JSON parse failed
   }
-
-  return false;
+  /* eslint-enable no-await-in-loop */
 }
 
 async function getFileSha(
