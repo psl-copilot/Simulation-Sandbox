@@ -188,11 +188,18 @@ async function copyTemplateFiles(
 
       if (!createRes.ok) {
         const errorText = await createRes.text();
-        const errorData = JSON.parse(errorText) as { message?: string };
 
-        if (createRes.status === 409 && errorData.message?.includes('reference already exists')) {
-          loggerService.log(`File already exists, skipping: ${file.path}`);
-          return;
+        if (createRes.status === 409) {
+          const conflictHandled = await handleConflictError({
+            errorText,
+            filePath: file.path,
+            createBody,
+            api,
+            headers,
+            org,
+            repo,
+          });
+          if (conflictHandled) return;
         }
 
         throw new Error(`Failed to create file ${file.path}: ${errorText}`);
@@ -200,13 +207,70 @@ async function copyTemplateFiles(
 
       loggerService.log(`Added: ${file.path}`);
     } catch (error) {
-      if (error instanceof Error && error.message.includes('reference already exists')) {
-        loggerService.log(`File already exists, skipping: ${file.path}`);
-        return;
+      if (error instanceof Error) {
+        if (
+          error.message.includes('reference already exists') ||
+          error.message.includes('but expected')
+        ) {
+          loggerService.log(`File conflict, skipping: ${file.path}`);
+          return;
+        }
       }
       throw error;
     }
   }, Promise.resolve());
+}
+
+async function handleConflictError(params: {
+  errorText: string;
+  filePath: string;
+  createBody: { message: string; content: string; branch: string; sha?: string };
+  api: string;
+  headers: Record<string, string>;
+  org: string;
+  repo: string;
+}): Promise<boolean> {
+  const { errorText, filePath, createBody, api, headers, org, repo } = params;
+
+  try {
+    const errorData = JSON.parse(errorText) as { message?: string };
+
+    if (errorData.message?.includes('reference already exists')) {
+      loggerService.log(`File already exists, skipping: ${filePath}`);
+      return true;
+    }
+
+    if (errorData.message?.includes('but expected')) {
+      loggerService.log(`SHA mismatch for ${filePath}, retrying with latest SHA`);
+
+      const latestFileRes = await fetch(`${api}/repos/${org}/${repo}/contents/${filePath}`, {
+        headers,
+      });
+
+      if (latestFileRes.ok) {
+        const { sha: latestSha } = (await latestFileRes.json()) as { sha: string };
+        const retryBody = { ...createBody, sha: latestSha };
+
+        const retryRes = await fetch(`${api}/repos/${org}/${repo}/contents/${filePath}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(retryBody),
+        });
+
+        if (retryRes.ok) {
+          loggerService.log(`Added: ${filePath} (retry)`);
+          return true;
+        }
+      }
+
+      loggerService.log(`File update conflict, skipping: ${filePath}`);
+      return true;
+    }
+  } catch {
+    // JSON parse failed
+  }
+
+  return false;
 }
 
 async function getFileSha(

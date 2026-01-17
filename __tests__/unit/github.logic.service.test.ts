@@ -425,5 +425,110 @@ describe('GitHub Logic Service', () => {
 
       expect(reply.status).toHaveBeenCalledWith(200);
     });
+
+    it('should handle SHA mismatch with successful retry', async () => {
+      const request = createMockRequest({
+        ruleId: '123',
+        ruleVersion: '1.0.0',
+        organization: 'test-org',
+      });
+      const reply = createMockReply();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ name: 'test.txt', path: 'test.txt', type: 'file' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ content: 'dGVzdA==' }),
+        })
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          text: async () => JSON.stringify({ message: 'is at abc123 but expected def456' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sha: 'abc123' }),
+        })
+        .mockResolvedValueOnce({ ok: true });
+
+      await bootstrapHandler(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('should handle SHA mismatch with failed retry', async () => {
+      const request = createMockRequest({
+        ruleId: '123',
+        ruleVersion: '1.0.0',
+        organization: 'test-org',
+      });
+      const reply = createMockReply();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ name: 'test.txt', path: 'test.txt', type: 'file' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ content: 'dGVzdA==' }),
+        })
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          text: async () => JSON.stringify({ message: 'is at abc123 but expected def456' }),
+        })
+        .mockResolvedValueOnce({ ok: false });
+
+      await bootstrapHandler(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('should handle conflict with malformed JSON response', async () => {
+      const request = createMockRequest({
+        ruleId: '123',
+        ruleVersion: '1.0.0',
+        organization: 'test-org',
+      });
+      const reply = createMockReply();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ name: 'test.txt', path: 'test.txt', type: 'file' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ content: 'dGVzdA==' }),
+        })
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          text: async () => 'malformed json',
+        });
+
+      await bootstrapHandler(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
   });
 });
