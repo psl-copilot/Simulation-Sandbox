@@ -1,0 +1,162 @@
+{
+  "info": {
+    "_postman_id": "adb8979f-c4e9-4afc-a925-3abacc5373bb",
+    "name": "Simulation Sandbox API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "51501795"
+  },
+  "item": [
+    {
+      "name": "Delete a Repo",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{GITHUB_TOKEN}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "https://api.github.com/repos/psl-copilot/rule-911",
+          "protocol": "https",
+          "host": [
+            "api",
+            "github",
+            "com"
+          ],
+          "path": [
+            "repos",
+            "psl-copilot",
+            "rule-911"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Bootstrap Rule Repository",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ruleId\": \"021\",\n  \"ruleVersion\": \"1.0.0\",\n  \"organization\": \"psl-copilot\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/bootstrap",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "bootstrap"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Populate Rule Repository",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"organization\": \"psl-copilot\",\n  \"ruleId\": \"021\",\n  \"ruleCode\": \"Ly8gU1BEWC1MaWNlbnNlLUlkZW50aWZpZXI6IEFwYWNoZS0yLjAKCmV4cG9ydCBjb25zdCBoZWxsbyA9ICgpID0+ICdIZWxsbyBXb3JsZCc7Cg==\",\n  \"testCode\": \"aW1wb3J0IHsgaGVsbG8gfSBmcm9tICcuLi8uLi9zcmMvcnVsZS0wMjEnOwoKZGVzY3JpYmUoJ3J1bGUtMDIxJywgKCkgPT4gewogIHRlc3QoJ2hlbGxvJywgKCkgPT4gewogICAgZXhwZWN0KGhlbGxvKCkpLnRvQmUoJ0hlbGxvIFdvcmxkJyk7CiAgfSk7Cn0pOwo=\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/populate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "populate"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Promote Rule Repository",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"organization\": \"psl-copilot\",\r\n  \"ruleId\": \"123\",\r\n  \"branchName\": \"dev\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/promote",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "promote"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    }
+  ]
+}
