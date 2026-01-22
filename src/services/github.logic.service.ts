@@ -1,6 +1,6 @@
-import type { BootstrapBody, PopulateBody } from '../schemas';
+import type { BootstrapBody, PopulateBody, PromoteBody, FetchLatestTestReportBody } from '../schemas';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { configuration, loggerService } from '../index';
+import { configuration, loggerService,  } from '../index';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 interface PackageJson {
@@ -8,11 +8,19 @@ interface PackageJson {
   version?: string;
   [key: string]: unknown;
 }
-/**
- * Extract GitHub token from incoming request
- * Expected header:
- *   Authorization: Bearer <token>
- */
+interface GitHubCommit {
+  sha: string;
+  commit: {
+    message: string;
+    tree: {
+      sha: string;
+    };
+  };
+}
+
+interface GitHubNewCommit {
+  sha: string;
+}
 
 function getGitHubTokenFromRequest(request: FastifyRequest): string {
   const authHeader = request.headers.authorization;
@@ -30,13 +38,11 @@ function getGitHubTokenFromRequest(request: FastifyRequest): string {
   return token;
 }
 
-/**
- * Build GitHub API config using request token
- */
+
 const getGitHubApiConfig = (token: string): { api: string; headers: Record<string, string> } => ({
   api: 'https://api.github.com',
   headers: {
-    Authorization: `token ${token}`, // GitHub-recommended format
+    Authorization: `token ${token}`,
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
   },
@@ -49,10 +55,6 @@ const handleError = (error: unknown, reply: FastifyReply): void => {
   loggerService.error(message);
   reply.status(500).send({ success: false, message });
 };
-
-/* -------------------------------------------------------------------------- */
-/*                                   BOOTSTRAP                                */
-/* -------------------------------------------------------------------------- */
 
 export const bootstrapHandler = async (
   request: FastifyRequest,
@@ -101,10 +103,6 @@ export const bootstrapHandler = async (
   }
 };
 
-/* -------------------------------------------------------------------------- */
-/*                                   POPULATE                                 */
-/* -------------------------------------------------------------------------- */
-
 export const populateHandler = async (
   request: FastifyRequest,
   reply: FastifyReply
@@ -121,7 +119,6 @@ export const populateHandler = async (
     const rulePath = 'src/rule.ts';
     const testPath = '__tests__/unit/rule.test.ts';
 
-    // ---- RULE FILE ----
     const ruleFileSha = await getFileSha(organization, repo, rulePath, branch, headers);
 
     const ruleRes = await fetch(`${api}/repos/${organization}/${repo}/contents/${rulePath}`, {
@@ -139,7 +136,6 @@ export const populateHandler = async (
       throw new Error(`Rule update failed: ${await ruleRes.text()}`);
     }
 
-    // ---- TEST FILE ----
     const testFileSha = await getFileSha(organization, repo, testPath, branch, headers);
 
     const testRes = await fetch(`${api}/repos/${organization}/${repo}/contents/${testPath}`, {
@@ -166,10 +162,6 @@ export const populateHandler = async (
   }
 };
 
-/* -------------------------------------------------------------------------- */
-/*                                   PROMOTE                                  */
-/* -------------------------------------------------------------------------- */
-
 export const promoteHandler = async (
   request: FastifyRequest,
   reply: FastifyReply
@@ -178,15 +170,10 @@ export const promoteHandler = async (
     const token = getGitHubTokenFromRequest(request);
     const { api, headers } = getGitHubApiConfig(token);
 
-    const { organization, ruleId, branchName } = request.body as {
-      organization: string;
-      ruleId: string;
-      branchName: string;
-    };
+    const { organization, ruleId, branchName } = request.body as PromoteBody;
 
     const repo = getRepoName(ruleId);
 
-    // Prefer staging, fallback to default branch
     const baseBranch = (await getBranchSha(organization, repo, 'staging', headers))
       ? 'staging'
       : configuration.GITHUB_DEFAULT_BRANCH;
@@ -197,33 +184,128 @@ export const promoteHandler = async (
       throw new Error(`Base branch "${baseBranch}" not found`);
     }
 
-    const createRes = await fetch(`${api}/repos/${organization}/${repo}/git/refs`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        ref: `refs/heads/${branchName}`,
-        sha: baseSha,
-      }),
-    });
+    const existingBranchSha = await getBranchSha(organization, repo, branchName, headers);
 
-    if (!createRes.ok) {
-      throw new Error(await createRes.text());
+    if (existingBranchSha) {
+      const newCommitMessage = `Sync ${branchName} with latest commit from ${baseBranch}`;
+
+      const latestCommitRes = await fetch(
+        `${api}/repos/${organization}/${repo}/commits/${baseSha}`,
+        { headers }
+      );
+
+      if (!latestCommitRes.ok) {
+        throw new Error(`Failed to fetch the latest commit from the base branch: ${await latestCommitRes.text()}`);
+      }
+
+      const latestCommit = await latestCommitRes.json();
+      const treeSha = (latestCommit as GitHubCommit).commit.tree.sha;
+
+      const newCommitRes = await fetch(`${api}/repos/${organization}/${repo}/git/commits`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          message: newCommitMessage,
+          tree: treeSha, 
+          parents: [existingBranchSha],
+        }),
+      });
+
+      if (!newCommitRes.ok) {
+        throw new Error(`Failed to create commit: ${await newCommitRes.text()}`);
+      }
+
+      const newCommit = await newCommitRes.json();
+      const newCommitSha = (newCommit as GitHubNewCommit).sha;
+
+      const updateRes = await fetch(`${api}/repos/${organization}/${repo}/git/refs/heads/${branchName}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          sha: newCommitSha,
+        }),
+      });
+
+      if (!updateRes.ok) {
+        throw new Error(`Failed to update branch reference: ${await updateRes.text()}`);
+      }
+
+      loggerService.log(`Synchronized branch ${branchName} with the latest commit from ${baseBranch} in ${organization}/${repo}`);
+    } else {
+      const createRes = await fetch(`${api}/repos/${organization}/${repo}/git/refs`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          ref: `refs/heads/${branchName}`,
+          sha: baseSha,
+        }),
+      });
+
+      if (!createRes.ok) {
+        throw new Error(await createRes.text());
+      }
+
+      loggerService.log(`Created branch ${branchName} from ${baseBranch} in ${organization}/${repo}`);
     }
-
-    loggerService.log(`Created branch ${branchName} from ${baseBranch} in ${organization}/${repo}`);
 
     reply.status(200).send({
       success: true,
-      message: `Branch ${branchName} created from ${baseBranch}`,
+      message: `Branch ${branchName} is synchronized with ${baseBranch}`,
     });
   } catch (error) {
     handleError(error, reply);
   }
 };
 
-/* -------------------------------------------------------------------------- */
-/*                                   HELPERS                                  */
-/* -------------------------------------------------------------------------- */
+export const fetchLatestTestReportHandler = async (
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> => {
+  try {
+    const token = getGitHubTokenFromRequest(request);
+    const { api, headers } = getGitHubApiConfig(token);
+
+    const { organization, ruleId, branchName } = request.body as FetchLatestTestReportBody;
+    const repo = getRepoName(ruleId);
+
+    const branch = branchName || configuration.GITHUB_DEFAULT_BRANCH;
+
+    const sha = await getBranchSha(organization, repo, branch, headers);
+
+    if (!sha) {
+      throw new Error(`Could not find the branch reference or commit SHA for ${organization}/${repo}`);
+    }
+
+    const filePath = 'reports/unit-tests/latest/index.html';
+
+    const fileRes = await fetch(`${api}/repos/${organization}/${repo}/contents/${filePath}?ref=${sha}`, {
+      headers,
+    });
+
+    if (!fileRes.ok) {
+      if (fileRes.status === 404) {
+        return await reply.status(404).send({
+          success: false,
+          message: `The test report at path "${filePath}" does not exist in ${organization}/${repo} on branch "${branchName}"`,
+        });
+      } else {
+        throw new Error(`Failed to fetch file: ${await fileRes.text()}`);
+      }
+    }
+
+    const fileData = (await fileRes.json()) as { content: string; encoding: string };
+
+    if (fileData.encoding !== 'base64') {
+      throw new Error('Expected file content to be base64 encoded.');
+    }
+
+    const htmlContent = Buffer.from(fileData.content, 'base64').toString('utf8');
+
+    reply.header('Content-Type', 'text/html').send(htmlContent);
+  } catch (error) {
+    handleError(error, reply);
+  }
+};
 
 async function copyTemplateFiles(
   organization: string,
@@ -236,7 +318,6 @@ async function copyTemplateFiles(
   const api = 'https://api.github.com';
   const packagePath = 'package.json';
 
-  // 1️⃣ Fetch existing package.json
   const getRes = await fetch(
     `${api}/repos/${organization}/${repo}/contents/${packagePath}?ref=${branch}`,
     { headers }
@@ -251,7 +332,6 @@ async function copyTemplateFiles(
     sha: string;
   };
 
-  // 2️⃣ Decode + mutate (type-safe)
   const decoded = Buffer.from(pkgData.content, 'base64').toString('utf8');
   const pkg = JSON.parse(decoded) as PackageJson;
 
@@ -260,7 +340,6 @@ async function copyTemplateFiles(
 
   const updatedContent = Buffer.from(JSON.stringify(pkg, null, 2)).toString('base64');
 
-  // 3️⃣ Update package.json
   const putRes = await fetch(`${api}/repos/${organization}/${repo}/contents/${packagePath}`, {
     method: 'PUT',
     headers,

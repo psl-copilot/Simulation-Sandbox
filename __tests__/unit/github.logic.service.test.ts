@@ -5,7 +5,6 @@ import {
 } from '../../src/services/github.logic.service';
 import { FastifyRequest, FastifyReply } from 'fastify';
 
-// Mock the LoggerService from @tazama-lf/frms-coe-lib
 jest.mock('@tazama-lf/frms-coe-lib', () => ({
   LoggerService: jest.fn().mockImplementation(() => ({
     log: jest.fn(),
@@ -15,7 +14,6 @@ jest.mock('@tazama-lf/frms-coe-lib', () => ({
   })),
 }));
 
-// Mock the index module
 jest.mock('../../src/index', () => {
   const mockLogger = {
     log: jest.fn(),
@@ -34,7 +32,6 @@ jest.mock('../../src/index', () => {
   };
 });
 
-// Import mocked modules
 import { loggerService } from '../../src/index';
 
 describe('GitHub Logic Service', () => {
@@ -235,7 +232,6 @@ describe('GitHub Logic Service', () => {
         status: 404,
       };
 
-      // Mock 16 failed attempts (15 retries + 1 initial)
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(mockRepoResponse)
         .mockResolvedValue(mockContentsErrorResponse);
@@ -248,7 +244,7 @@ describe('GitHub Logic Service', () => {
           success: false,
         })
       );
-    }, 20000); // Increase timeout to 20 seconds
+    }, 20000);
 
     it('should handle repository content retry and succeed', async () => {
       const mockRepoResponse = {
@@ -283,14 +279,13 @@ describe('GitHub Logic Service', () => {
         text: async () => '',
       };
 
-      // First repo create succeeds, then contents fail a few times, then succeed
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse) // Create repo
-        .mockResolvedValueOnce(mockContentsErrorResponse) // Contents not ready (retry 1)
-        .mockResolvedValueOnce(mockContentsErrorResponse) // Contents not ready (retry 2)
-        .mockResolvedValueOnce(mockContentsSuccessResponse) // Contents ready!
-        .mockResolvedValueOnce(mockPackageGetResponse) // Get package.json
-        .mockResolvedValueOnce(mockPackagePutResponse); // Update package.json
+        .mockResolvedValueOnce(mockRepoResponse) 
+        .mockResolvedValueOnce(mockContentsErrorResponse) 
+        .mockResolvedValueOnce(mockContentsErrorResponse) 
+        .mockResolvedValueOnce(mockContentsSuccessResponse) 
+        .mockResolvedValueOnce(mockPackageGetResponse) 
+        .mockResolvedValueOnce(mockPackagePutResponse); 
 
       await bootstrapHandler(request, reply as FastifyReply);
 
@@ -838,13 +833,10 @@ describe('GitHub Logic Service', () => {
         text: jest.fn().mockResolvedValue(''),
       };
 
-      // The code calls getBranchSha twice for staging:
-      // 1. First to check if staging exists
-      // 2. Second to get the SHA to create the branch
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) // First check
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) // Second get SHA
-        .mockResolvedValueOnce(mockCreateBranchResponse); // Create branch
+        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
+        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
+        .mockResolvedValueOnce(mockCreateBranchResponse); 
 
       await promoteHandler(request, reply as FastifyReply);
 
@@ -895,9 +887,9 @@ describe('GitHub Logic Service', () => {
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) // First check
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) // Second get SHA
-        .mockResolvedValueOnce(mockCreateBranchError); // Create branch fails
+        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
+        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
+        .mockResolvedValueOnce(mockCreateBranchError); 
 
       await promoteHandler(request, reply as FastifyReply);
 
@@ -925,9 +917,9 @@ describe('GitHub Logic Service', () => {
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockGetStagingBranchError) // Check staging (returns falsy)
-        .mockResolvedValueOnce(mockGetDefaultBranchResponse) // Get main branch SHA
-        .mockResolvedValueOnce(mockCreateBranchResponse); // Create branch
+        .mockResolvedValueOnce(mockGetStagingBranchError) 
+        .mockResolvedValueOnce(mockGetDefaultBranchResponse) 
+        .mockResolvedValueOnce(mockCreateBranchResponse); 
 
       await promoteHandler(request, reply as FastifyReply);
 

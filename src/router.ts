@@ -9,8 +9,10 @@ import {
   PopulateResponseSchema,
   PromoteBodySchema,
   PromoteResponseSchema,
+  FetchLatestTestReportBodySchema,
+  FetchLatestTestReportResponseSchema,
 } from './schemas';
-import { bootstrapHandler, populateHandler, promoteHandler } from './services/github.logic.service';
+import { bootstrapHandler, populateHandler, promoteHandler, fetchLatestTestReportHandler } from './services/github.logic.service';
 import { SetOptionsBodyAndParams } from './utils/schema-utils';
 
 function Routes(fastify: FastifyInstance): void {
@@ -29,6 +31,11 @@ function Routes(fastify: FastifyInstance): void {
   fastify.post('/v1/promote', {
     ...SetOptionsBodyAndParams(promoteHandler, PromoteBodySchema, PromoteResponseSchema),
   });
+
+  fastify.post('/v1/report', {
+    ...SetOptionsBodyAndParams(fetchLatestTestReportHandler, FetchLatestTestReportBodySchema, FetchLatestTestReportResponseSchema),
+  });
+  
 }
 
 export default Routes;
