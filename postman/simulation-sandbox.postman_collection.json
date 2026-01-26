@@ -50,6 +50,18 @@
         },
         "url": "{{baseUrl}}/api/v1/populate"
       }
-    }
+    },
+    {
+      "name": "Report Rule Repository",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n    \"organization\": \"psl-copilot\",\r\n    \"ruleId\": \"5\",\r\n    \"branchName\": \"staging\"\r\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/report"
+        }
+      }
   ]
 }
