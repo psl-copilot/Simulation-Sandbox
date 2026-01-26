@@ -151,6 +151,34 @@
         }
       },
       "response": []
+    },
+    {
+      "name": "Report Rule Repository",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n    \"organization\": \"psl-copilot\",\r\n    \"ruleId\": \"5\",\r\n    \"branchName\": \"staging\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/report",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "report"
+          ]
+        }
+      },
+      "response": []
     }
   ],
   "variable": [
