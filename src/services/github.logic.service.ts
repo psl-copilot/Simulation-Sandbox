@@ -1,6 +1,11 @@
-import type { BootstrapBody, PopulateBody, PromoteBody, FetchLatestTestReportBody } from '../schemas';
+import type {
+  BootstrapBody,
+  PopulateBody,
+  PromoteBody,
+  FetchLatestTestReportQuery,
+} from '../schemas';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { configuration, loggerService,  } from '../index';
+import { configuration, loggerService } from '../index';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 interface PackageJson {
@@ -22,6 +27,22 @@ interface GitHubNewCommit {
   sha: string;
 }
 
+interface GitHubFileResponse {
+  content: string;
+  encoding: 'base64';
+}
+
+function isGitHubFileResponse(data: unknown): data is GitHubFileResponse {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'content' in data &&
+    'encoding' in data &&
+    typeof (data as { content?: unknown }).content === 'string' &&
+    (data as { encoding?: unknown }).encoding === 'base64'
+  );
+}
+
 function getGitHubTokenFromRequest(request: FastifyRequest): string {
   const authHeader = request.headers.authorization;
 
@@ -37,7 +58,6 @@ function getGitHubTokenFromRequest(request: FastifyRequest): string {
 
   return token;
 }
-
 
 const getGitHubApiConfig = (token: string): { api: string; headers: Record<string, string> } => ({
   api: 'https://api.github.com',
@@ -195,7 +215,9 @@ export const promoteHandler = async (
       );
 
       if (!latestCommitRes.ok) {
-        throw new Error(`Failed to fetch the latest commit from the base branch: ${await latestCommitRes.text()}`);
+        throw new Error(
+          `Failed to fetch the latest commit from the base branch: ${await latestCommitRes.text()}`
+        );
       }
 
       const latestCommit = await latestCommitRes.json();
@@ -206,7 +228,7 @@ export const promoteHandler = async (
         headers,
         body: JSON.stringify({
           message: newCommitMessage,
-          tree: treeSha, 
+          tree: treeSha,
           parents: [existingBranchSha],
         }),
       });
@@ -218,19 +240,24 @@ export const promoteHandler = async (
       const newCommit = await newCommitRes.json();
       const newCommitSha = (newCommit as GitHubNewCommit).sha;
 
-      const updateRes = await fetch(`${api}/repos/${organization}/${repo}/git/refs/heads/${branchName}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({
-          sha: newCommitSha,
-        }),
-      });
+      const updateRes = await fetch(
+        `${api}/repos/${organization}/${repo}/git/refs/heads/${branchName}`,
+        {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            sha: newCommitSha,
+          }),
+        }
+      );
 
       if (!updateRes.ok) {
         throw new Error(`Failed to update branch reference: ${await updateRes.text()}`);
       }
 
-      loggerService.log(`Synchronized branch ${branchName} with the latest commit from ${baseBranch} in ${organization}/${repo}`);
+      loggerService.log(
+        `Synchronized branch ${branchName} with the latest commit from ${baseBranch} in ${organization}/${repo}`
+      );
     } else {
       const createRes = await fetch(`${api}/repos/${organization}/${repo}/git/refs`, {
         method: 'POST',
@@ -245,7 +272,9 @@ export const promoteHandler = async (
         throw new Error(await createRes.text());
       }
 
-      loggerService.log(`Created branch ${branchName} from ${baseBranch} in ${organization}/${repo}`);
+      loggerService.log(
+        `Created branch ${branchName} from ${baseBranch} in ${organization}/${repo}`
+      );
     }
 
     reply.status(200).send({
@@ -265,43 +294,71 @@ export const fetchLatestTestReportHandler = async (
     const token = getGitHubTokenFromRequest(request);
     const { api, headers } = getGitHubApiConfig(token);
 
-    const { organization, ruleId, branchName } = request.body as FetchLatestTestReportBody;
-    const repo = getRepoName(ruleId);
+    const { organization, ruleId, branchName } = request.query as FetchLatestTestReportQuery;
 
-    const branch = branchName || configuration.GITHUB_DEFAULT_BRANCH;
+    const repo = getRepoName(ruleId);
+    const branch = branchName ?? configuration.GITHUB_DEFAULT_BRANCH;
+    const filePath = configuration.GITHUB_TEST_REPORT_PATH;
 
     const sha = await getBranchSha(organization, repo, branch, headers);
 
     if (!sha) {
-      throw new Error(`Could not find the branch reference or commit SHA for ${organization}/${repo}`);
+      return await reply.status(404).send({
+        success: false,
+        message: `Branch "${branch}" was not found in ${organization}/${repo}`,
+      });
     }
 
-    const filePath = 'reports/unit-tests/latest/index.html';
+    let fileRes: Response;
+    try {
+      fileRes = await fetch(
+        `${api}/repos/${organization}/${repo}/contents/${filePath}?ref=${sha}`,
+        { headers }
+      );
+    } catch (err) {
+      return await reply.status(500).send({
+        success: false,
+        message: 'Failed to communicate with GitHub API',
+      });
+    }
 
-    const fileRes = await fetch(`${api}/repos/${organization}/${repo}/contents/${filePath}?ref=${sha}`, {
-      headers,
-    });
+    if (fileRes.status === 404) {
+      return await reply.status(404).send({
+        success: false,
+        message: `The test report at path "${filePath}" does not exist in ${organization}/${repo} on branch "${branch}"`,
+      });
+    }
 
     if (!fileRes.ok) {
-      if (fileRes.status === 404) {
-        return await reply.status(404).send({
-          success: false,
-          message: `The test report at path "${filePath}" does not exist in ${organization}/${repo} on branch "${branchName}"`,
-        });
-      } else {
-        throw new Error(`Failed to fetch file: ${await fileRes.text()}`);
-      }
+      return await reply.status(500).send({
+        success: false,
+        message: 'GitHub API returned an unexpected error',
+        details: await fileRes.text(),
+      });
     }
 
-    const fileData = (await fileRes.json()) as { content: string; encoding: string };
+    const fileData = await fileRes.json();
 
-    if (fileData.encoding !== 'base64') {
-      throw new Error('Expected file content to be base64 encoded.');
+    if (Array.isArray(fileData)) {
+      return await reply.status(400).send({
+        success: false,
+        message: `Expected a file but found a directory at "${filePath}"`,
+      });
     }
+
+    if (!isGitHubFileResponse(fileData)) {
+      return await reply.status(500).send({
+        success: false,
+        message: 'Invalid file response received from GitHub API',
+      });
+    }
+
+    loggerService.log(
+      `Fetching latest test report from ${api}/repos/${organization}/${repo}/contents/${filePath}?ref=${sha} on branch ${branch}`
+    );
 
     const htmlContent = Buffer.from(fileData.content, 'base64').toString('utf8');
-
-    reply.header('Content-Type', 'text/html').send(htmlContent);
+    await reply.header('Content-Type', 'text/html').send(htmlContent);
   } catch (error) {
     handleError(error, reply);
   }

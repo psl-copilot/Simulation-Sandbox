@@ -9,11 +9,16 @@ import {
   PopulateResponseSchema,
   PromoteBodySchema,
   PromoteResponseSchema,
-  FetchLatestTestReportBodySchema,
   FetchLatestTestReportResponseSchema,
 } from './schemas';
-import { bootstrapHandler, populateHandler, promoteHandler, fetchLatestTestReportHandler } from './services/github.logic.service';
+import {
+  bootstrapHandler,
+  populateHandler,
+  promoteHandler,
+  fetchLatestTestReportHandler,
+} from './services/github.logic.service';
 import { SetOptionsBodyAndParams } from './utils/schema-utils';
+import { FetchLatestTestReportQuerySchema } from './schemas/fetchLatestTestReportSchema';
 
 function Routes(fastify: FastifyInstance): void {
   fastify.get('/', handleHealthCheck);
@@ -32,10 +37,15 @@ function Routes(fastify: FastifyInstance): void {
     ...SetOptionsBodyAndParams(promoteHandler, PromoteBodySchema, PromoteResponseSchema),
   });
 
-  fastify.post('/v1/report', {
-    ...SetOptionsBodyAndParams(fetchLatestTestReportHandler, FetchLatestTestReportBodySchema, FetchLatestTestReportResponseSchema),
+  fastify.get('/v1/report', {
+    schema: {
+      querystring: FetchLatestTestReportQuerySchema,
+      response: {
+        200: FetchLatestTestReportResponseSchema,
+      },
+    },
+    handler: fetchLatestTestReportHandler,
   });
-  
 }
 
 export default Routes;

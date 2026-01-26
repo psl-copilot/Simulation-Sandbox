@@ -17,8 +17,8 @@ export {
   type PromoteResponse,
 } from './promoteSchema';
 export {
-  FetchLatestTestReportBodySchema,
+  FetchLatestTestReportQuerySchema,
   FetchLatestTestReportResponseSchema,
-  type FetchLatestTestReportBody,
+  type FetchLatestTestReportQuery,
   type FetchLatestTestReportResponse,
 } from './fetchLatestTestReportSchema';

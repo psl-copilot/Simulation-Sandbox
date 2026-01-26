@@ -17,6 +17,7 @@ export interface IConfig {
   GITHUB_DEFAULT_BRANCH: string;
   GITHUB_TEMPLATE_REPO: string;
   GITHUB_TEMPLATE_OWNER: string;
+  GITHUB_TEST_REPORT_PATH: string;
   PORT: number;
 }
 
@@ -27,12 +28,17 @@ export const additionalEnvironmentVariables: AdditionalConfig[] = [
     optional: false,
   },
   {
+    name: 'GITHUB_TEMPLATE_OWNER',
+    type: 'string',
+    optional: false,
+  },
+  {
     name: 'GITHUB_TEMPLATE_REPO',
     type: 'string',
     optional: false,
   },
   {
-    name: 'GITHUB_TEMPLATE_OWNER',
+    name: 'GITHUB_TEST_REPORT_PATH',
     type: 'string',
     optional: false,
   },
