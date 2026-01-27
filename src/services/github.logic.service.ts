@@ -7,30 +7,15 @@ import type {
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { configuration, loggerService } from '../index';
 import { setTimeout as sleep } from 'node:timers/promises';
-
-interface PackageJson {
-  name?: string;
-  version?: string;
-  [key: string]: unknown;
-}
-interface GitHubCommit {
-  sha: string;
-  commit: {
-    message: string;
-    tree: {
-      sha: string;
-    };
-  };
-}
-
-interface GitHubNewCommit {
-  sha: string;
-}
-
-interface GitHubFileResponse {
-  content: string;
-  encoding: 'base64';
-}
+import type {
+  GitHubFileResponse,
+  GitHubCommit,
+  GitHubNewCommit,
+  GitHubWorkflowRun,
+  GitHubWorkflowRunsResponse,
+  GitHubUnitTestStatus,
+  PackageJson,
+} from '../interfaces';
 
 function isGitHubFileResponse(data: unknown): data is GitHubFileResponse {
   return (
@@ -299,6 +284,53 @@ export const fetchLatestTestReportHandler = async (
     const repo = getRepoName(ruleId);
     const branch = branchName ?? configuration.GITHUB_DEFAULT_BRANCH;
     const filePath = configuration.GITHUB_TEST_REPORT_PATH;
+    const workflowFile = 'unit-test.yml';
+
+    const runsRes = await fetch(
+      `${api}/repos/${organization}/${repo}/actions/workflows/${workflowFile}/runs?branch=${branch}&per_page=1`,
+      { headers }
+    );
+
+    if (!runsRes.ok) {
+      return await reply.status(500).send({
+        success: false,
+        message: 'Failed to fetch unit test workflow status',
+        details: await runsRes.text(),
+      });
+    }
+
+    const runsData = (await runsRes.json()) as GitHubWorkflowRunsResponse;
+    const latestRun = runsData.workflow_runs.at(0);
+
+    if (!latestRun) {
+      return await reply.status(404).send({
+        success: false,
+        message: 'No unit test workflow run found for this branch',
+      });
+    }
+
+    const { status } = normalizeUnitTestStatus(latestRun);
+
+    if (status === 'queued' || status === 'running') {
+      return await reply.status(409).send({
+        success: false,
+        message: `Unit tests are still ${status}. Report is not available yet.`,
+      });
+    }
+
+    if (status === 'failed' || status === 'cancelled') {
+      return await reply.status(422).send({
+        success: false,
+        message: `Unit tests ${status}. Report cannot be generated.`,
+      });
+    }
+
+    if (status !== 'completed') {
+      return await reply.status(404).send({
+        success: false,
+        message: 'Unit test report is not available',
+      });
+    }
 
     const sha = await getBranchSha(organization, repo, branch, headers);
 
@@ -315,7 +347,7 @@ export const fetchLatestTestReportHandler = async (
         `${api}/repos/${organization}/${repo}/contents/${filePath}?ref=${sha}`,
         { headers }
       );
-    } catch (err) {
+    } catch {
       return await reply.status(500).send({
         success: false,
         message: 'Failed to communicate with GitHub API',
@@ -353,9 +385,7 @@ export const fetchLatestTestReportHandler = async (
       });
     }
 
-    loggerService.log(
-      `Fetching latest test report from ${api}/repos/${organization}/${repo}/contents/${filePath}?ref=${sha} on branch ${branch}`
-    );
+    loggerService.log(`Serving unit test report from ${organization}/${repo} (${branch})`);
 
     const htmlContent = Buffer.from(fileData.content, 'base64').toString('utf8');
     await reply.header('Content-Type', 'text/html').send(htmlContent);
@@ -472,3 +502,94 @@ async function getBranchSha(
   const data = (await res.json()) as { object: { sha: string } };
   return data.object.sha;
 }
+
+function normalizeUnitTestStatus(run: GitHubWorkflowRun): {
+  status: GitHubUnitTestStatus;
+  reportAvailable: boolean;
+} {
+  if (run.status === 'queued') {
+    return { status: 'queued', reportAvailable: false };
+  }
+
+  if (run.status === 'in_progress') {
+    return { status: 'running', reportAvailable: false };
+  }
+
+  switch (run.conclusion) {
+    case 'success':
+      return { status: 'completed', reportAvailable: true };
+    case 'failure':
+      return { status: 'failed', reportAvailable: false };
+    case 'cancelled':
+      return { status: 'cancelled', reportAvailable: false };
+    default:
+      return { status: 'not_found', reportAvailable: false };
+  }
+}
+
+export const getUnitTestStatusHandler = async (
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> => {
+  try {
+    const token = getGitHubTokenFromRequest(request);
+    const { api, headers } = getGitHubApiConfig(token);
+
+    const { organization, ruleId, branchName } = request.query as {
+      organization: string;
+      ruleId: string;
+      branchName?: string;
+    };
+
+    const repo = getRepoName(ruleId);
+    const branch = branchName ?? configuration.GITHUB_DEFAULT_BRANCH;
+    const workflowFile = 'unit-test.yml';
+
+    const res = await fetch(
+      `${api}/repos/${organization}/${repo}/actions/workflows/${workflowFile}/runs?branch=${branch}&per_page=1`,
+      { headers }
+    );
+
+    if (res.status === 404) {
+      return await reply.status(404).send({
+        success: false,
+        message: `Workflow "${workflowFile}" not found in ${organization}/${repo}`,
+      });
+    }
+
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
+
+    const data = (await res.json()) as GitHubWorkflowRunsResponse;
+
+    const latestRun = data.workflow_runs.at(0);
+
+    loggerService.log(JSON.stringify(latestRun));
+
+    if (!latestRun) {
+      return await reply.status(200).send({
+        success: true,
+        status: 'not_found',
+        reportAvailable: false,
+      });
+    }
+    const { status, reportAvailable } = normalizeUnitTestStatus(latestRun);
+
+    await reply.status(200).send({
+      success: true,
+      workflow: 'Unit Tests',
+      branch,
+      status,
+      github: {
+        runNumber: latestRun.run_number,
+        runUrl: latestRun.html_url,
+        status: latestRun.status,
+        conclusion: latestRun.conclusion,
+      },
+      reportAvailable,
+    });
+  } catch (error) {
+    handleError(error, reply);
+  }
+};

@@ -5,12 +5,19 @@ import type { TSchema } from '@sinclair/typebox';
 export const SetOptionsBodyAndParams = (
   handler: RouteHandlerMethod,
   bodySchema?: TSchema,
+  querySchema?: TSchema,
   responseSchema?: TSchema
 ): { handler: RouteHandlerMethod; schema: FastifySchema } => {
-  const body = bodySchema ? { body: bodySchema } : undefined;
-  const response = responseSchema
-    ? { response: { 200: responseSchema, 500: responseSchema } }
-    : undefined;
-  const schema: FastifySchema = { ...body, ...response };
+  const schema: FastifySchema = {
+    ...(bodySchema && { body: bodySchema }),
+    ...(querySchema && { querystring: querySchema }),
+    ...(responseSchema && {
+      response: {
+        200: responseSchema,
+        500: responseSchema,
+      },
+    }),
+  };
+
   return { handler, schema };
 };

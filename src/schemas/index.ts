@@ -22,3 +22,9 @@ export {
   type FetchLatestTestReportQuery,
   type FetchLatestTestReportResponse,
 } from './fetchLatestTestReportSchema';
+export {
+  UnitTestStatusQuerySchema,
+  UnitTestStatusResponseSchema,
+  type UnitTestStatusQuery,
+  type UnitTestStatusResponse,
+} from './unitTestStatusSchema';
