@@ -14,6 +14,7 @@ dotenv.config({
 export type Configuration = ProcessorConfig & IConfig;
 
 export interface IConfig {
+  GH_TOKEN: string;
   GITHUB_DEFAULT_BRANCH: string;
   GITHUB_TEMPLATE_REPO: string;
   GITHUB_TEMPLATE_OWNER: string;
@@ -22,6 +23,11 @@ export interface IConfig {
 }
 
 export const additionalEnvironmentVariables: AdditionalConfig[] = [
+  {
+    name: 'GH_TOKEN',
+    type: 'string',
+    optional: false,
+  },
   {
     name: 'GITHUB_DEFAULT_BRANCH',
     type: 'string',

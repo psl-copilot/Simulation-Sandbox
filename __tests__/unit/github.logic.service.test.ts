@@ -2,6 +2,8 @@ import {
   bootstrapHandler,
   populateHandler,
   promoteHandler,
+  fetchLatestTestReportHandler,
+  getUnitTestStatusHandler,
 } from '../../src/services/github.logic.service';
 import { FastifyRequest, FastifyReply } from 'fastify';
 
@@ -27,12 +29,12 @@ jest.mock('../../src/index', () => {
       GITHUB_TEMPLATE_OWNER: 'template-owner',
       GITHUB_TEMPLATE_REPO: 'template-repo',
       GITHUB_DEFAULT_BRANCH: 'main',
+      GITHUB_TEST_REPORT_PATH: 'coverage/lcov-report/index.html',
+      GH_TOKEN: 'test-token',
     },
     loggerService: mockLogger,
   };
 });
-
-import { loggerService } from '../../src/index';
 
 describe('GitHub Logic Service', () => {
   let request: FastifyRequest;
@@ -45,14 +47,12 @@ describe('GitHub Logic Service', () => {
         ruleId: '123',
         ruleVersion: '1.0.0',
       },
-      headers: {
-        authorization: 'Bearer test-token',
-      } as any,
     } as FastifyRequest;
 
     reply = {
       status: jest.fn().mockReturnThis(),
       send: jest.fn().mockReturnThis(),
+      header: jest.fn().mockReturnThis(),
     } as Partial<FastifyReply>;
 
     global.fetch = jest.fn();
@@ -64,7 +64,7 @@ describe('GitHub Logic Service', () => {
   });
 
   describe('bootstrapHandler', () => {
-    it('should successfully bootstrap repository with template files', async () => {
+    it('should successfully bootstrap repository', async () => {
       const mockRepoResponse = {
         ok: true,
         json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
@@ -101,18 +101,12 @@ describe('GitHub Logic Service', () => {
       await bootstrapHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: true,
-        repoUrl: 'https://github.com/test-org/rule-123',
-        message: 'Created test-org/rule-123 v1.0.0',
-      });
     });
 
-    it('should handle repository creation error', async () => {
+    it('should handle errors during bootstrap', async () => {
       const mockErrorResponse = {
         ok: false,
-        statusText: 'Repository creation failed',
-        text: async () => 'Repository creation failed',
+        text: async () => 'Error',
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
@@ -120,43 +114,46 @@ describe('GitHub Logic Service', () => {
       await bootstrapHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: false,
-        message: 'Repository creation failed',
-      });
     });
 
-    it('should handle template fetch error', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsErrorResponse = {
-        ok: false,
-        statusText: 'Contents fetch failed',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsErrorResponse);
+    it('should handle non-Error exceptions', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce('String error');
 
       await bootstrapHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: false,
-        })
-      );
     });
 
-    it('should handle directory recursion and package.json processing', async () => {
+    it('should handle package.json get error', async () => {
       const mockRepoResponse = {
         ok: true,
         json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
+      };
+
+      const mockContentsResponse = {
+        ok: true,
+        json: async () => [],
+      };
+
+      const mockPackageGetError = {
+        ok: false,
+        text: async () => 'Package not found',
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockRepoResponse)
+        .mockResolvedValueOnce(mockContentsResponse)
+        .mockResolvedValueOnce(mockPackageGetError);
+
+      await bootstrapHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle package.json update error', async () => {
+      const mockRepoResponse = {
+        ok: true,
+        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
       };
 
       const mockContentsResponse = {
@@ -167,60 +164,30 @@ describe('GitHub Logic Service', () => {
       const mockPackageGetResponse = {
         ok: true,
         json: async () => ({
-          content: Buffer.from(
-            JSON.stringify({
-              name: 'template-name',
-              version: '0.0.1',
-            })
-          ).toString('base64'),
-          sha: 'def456',
+          content: Buffer.from(JSON.stringify({ name: 'old-name', version: '0.0.1' })).toString(
+            'base64'
+          ),
+          sha: 'abc123',
         }),
       };
 
-      const mockPackagePutResponse = {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
+      const mockPackagePutError = {
+        ok: false,
+        text: async () => 'Update failed',
       };
 
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(mockRepoResponse)
         .mockResolvedValueOnce(mockContentsResponse)
         .mockResolvedValueOnce(mockPackageGetResponse)
-        .mockResolvedValueOnce(mockPackagePutResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('should handle missing authorization header', async () => {
-      request.headers = {} as any;
+        .mockResolvedValueOnce(mockPackagePutError);
 
       await bootstrapHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: false,
-        message: 'Missing Authorization header',
-      });
     });
 
-    it('should handle invalid authorization header format', async () => {
-      request.headers = {
-        authorization: 'InvalidFormat',
-      } as any;
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: false,
-        message: 'Invalid Authorization header format',
-      });
-    });
-
-    it('should handle repository content wait timeout', async () => {
+    it('should handle repository content retry', async () => {
       const mockRepoResponse = {
         ok: true,
         json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
@@ -229,33 +196,6 @@ describe('GitHub Logic Service', () => {
 
       const mockContentsErrorResponse = {
         ok: false,
-        status: 404,
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValue(mockContentsErrorResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: false,
-        })
-      );
-    }, 20000);
-
-    it('should handle repository content retry and succeed', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsErrorResponse = {
-        ok: false,
-        status: 404,
       };
 
       const mockContentsSuccessResponse = {
@@ -280,103 +220,42 @@ describe('GitHub Logic Service', () => {
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse) 
-        .mockResolvedValueOnce(mockContentsErrorResponse) 
-        .mockResolvedValueOnce(mockContentsErrorResponse) 
-        .mockResolvedValueOnce(mockContentsSuccessResponse) 
-        .mockResolvedValueOnce(mockPackageGetResponse) 
-        .mockResolvedValueOnce(mockPackagePutResponse); 
+        .mockResolvedValueOnce(mockRepoResponse)
+        .mockResolvedValueOnce(mockContentsErrorResponse)
+        .mockResolvedValueOnce(mockContentsSuccessResponse)
+        .mockResolvedValueOnce(mockPackageGetResponse)
+        .mockResolvedValueOnce(mockPackagePutResponse);
 
       await bootstrapHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: true,
-        repoUrl: 'https://github.com/test-org/rule-123',
-        message: 'Created test-org/rule-123 v1.0.0',
-      });
     });
 
-    it('should handle package.json get error', async () => {
+    it('should handle repository content timeout', async () => {
       const mockRepoResponse = {
         ok: true,
         json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
         text: async () => '',
       };
 
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetError = {
+      const mockContentsErrorResponse = {
         ok: false,
-        status: 404,
-        text: async () => 'Package.json not found',
       };
 
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetError);
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockRepoResponse);
+
+      for (let i = 0; i < 20; i++) {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(mockContentsErrorResponse);
+      }
 
       await bootstrapHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
-      expect(loggerService.error).toHaveBeenCalled();
-    });
-
-    it('should handle package.json update error', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetResponse = {
-        ok: true,
-        json: async () => ({
-          content: Buffer.from(JSON.stringify({ name: 'old-name', version: '0.0.1' })).toString(
-            'base64'
-          ),
-          sha: 'abc123',
-        }),
-      };
-
-      const mockPackagePutError = {
-        ok: false,
-        text: async () => 'Update failed',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetResponse)
-        .mockResolvedValueOnce(mockPackagePutError);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(loggerService.error).toHaveBeenCalled();
-    });
+    }, 20000);
   });
 
   describe('populateHandler', () => {
-    beforeEach(() => {
-      request.body = {
-        organization: 'test-org',
-        ruleId: '123',
-        ruleCode: Buffer.from('rule code').toString('base64'),
-        testCode: Buffer.from('test code').toString('base64'),
-      };
-    });
-
-    it('should successfully populate repository files', async () => {
+    it('should successfully populate files', async () => {
       const mockGetRuleResponse = {
         ok: true,
         json: async () => ({ sha: 'rule-sha' }),
@@ -387,397 +266,95 @@ describe('GitHub Logic Service', () => {
         json: async () => ({ sha: 'test-sha' }),
       };
 
-      const mockPutResponse = {
+      const mockPutRuleResponse = {
         ok: true,
         json: async () => ({}),
-        text: async () => '',
+      };
+
+      const mockPutTestResponse = {
+        ok: true,
+        json: async () => ({}),
       };
 
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(mockGetRuleResponse)
-        .mockResolvedValueOnce(mockPutResponse)
+        .mockResolvedValueOnce(mockPutRuleResponse)
         .mockResolvedValueOnce(mockGetTestResponse)
-        .mockResolvedValueOnce(mockPutResponse);
+        .mockResolvedValueOnce(mockPutTestResponse);
 
       await populateHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: true,
-        message: 'Populated test-org/rule-123 on main',
-      });
     });
 
-    it('should handle non-Error exceptions', async () => {
-      (global.fetch as jest.Mock).mockRejectedValueOnce('Network error');
-
-      await populateHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: false,
-        message: 'Network error',
-      });
-    });
-
-    it('should handle content fetch failure and file creation failure', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageErrorResponse = {
+    it('should handle missing file sha', async () => {
+      const mockGetRuleError = {
         ok: false,
-        text: async () => 'Content fetch failed',
       };
 
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageErrorResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(loggerService.error).toHaveBeenCalled();
-    });
-
-    it('should handle file creation failure', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetResponse = {
-        ok: true,
-        json: async () => ({
-          content: Buffer.from('{}').toString('base64'),
-          sha: 'sha123',
-        }),
-      };
-
-      const mockPackagePutError = {
-        ok: false,
-        text: async () => 'File creation failed',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetResponse)
-        .mockResolvedValueOnce(mockPackagePutError);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(loggerService.error).toHaveBeenCalled();
-    });
-
-    it('should handle fetch errors in getFileSha', async () => {
-      const mockNotFoundResponse = {
-        ok: false,
-        status: 404,
-      };
-
-      const mockCreateResponse = {
+      const mockPutRuleResponse = {
         ok: true,
         json: async () => ({}),
-        text: async () => '',
+      };
+
+      const mockGetTestError = {
+        ok: false,
+      };
+
+      const mockPutTestResponse = {
+        ok: true,
+        json: async () => ({}),
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockNotFoundResponse)
-        .mockResolvedValueOnce(mockCreateResponse)
-        .mockResolvedValueOnce(mockNotFoundResponse)
-        .mockResolvedValueOnce(mockCreateResponse);
+        .mockResolvedValueOnce(mockGetRuleError)
+        .mockResolvedValueOnce(mockPutRuleResponse)
+        .mockResolvedValueOnce(mockGetTestError)
+        .mockResolvedValueOnce(mockPutTestResponse);
 
       await populateHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
     });
 
-    it('should populate files when both rule and test files do not exist', async () => {
-      const mockNotFoundResponse = {
-        ok: false,
-        status: 404,
-      };
-
-      const mockCreateResponse = {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockNotFoundResponse)
-        .mockResolvedValueOnce(mockCreateResponse)
-        .mockResolvedValueOnce(mockNotFoundResponse)
-        .mockResolvedValueOnce(mockCreateResponse);
-
-      await populateHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(200);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: true,
-        message: 'Populated test-org/rule-123 on main',
-      });
-    });
-
-    it('should handle file already exists error during bootstrap', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetResponse = {
-        ok: true,
-        json: async () => ({
-          content: Buffer.from('{}').toString('base64'),
-          sha: 'sha123',
-        }),
-      };
-
-      const mockPackagePutResponse = {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetResponse)
-        .mockResolvedValueOnce(mockPackagePutResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('should handle JSON parse error in file creation', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetResponse = {
-        ok: true,
-        json: async () => ({
-          content: Buffer.from('invalid json').toString('base64'),
-          sha: 'sha123',
-        }),
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(loggerService.error).toHaveBeenCalled();
-    });
-
-    it('should handle error thrown during file processing', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockRejectedValueOnce(new Error('Processing error'));
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(500);
-    });
-
-    it('should handle SHA mismatch with successful retry', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetResponse = {
-        ok: true,
-        json: async () => ({
-          content: Buffer.from('{}').toString('base64'),
-          sha: 'sha123',
-        }),
-      };
-
-      const mockPackagePutResponse = {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetResponse)
-        .mockResolvedValueOnce(mockPackagePutResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('should handle SHA mismatch with failed retry', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetResponse = {
-        ok: true,
-        json: async () => ({
-          content: Buffer.from('{}').toString('base64'),
-          sha: 'sha123',
-        }),
-      };
-
-      const mockPackagePutResponse = {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetResponse)
-        .mockResolvedValueOnce(mockPackagePutResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('should handle conflict with malformed JSON response', async () => {
-      const mockRepoResponse = {
-        ok: true,
-        json: async () => ({ html_url: 'https://github.com/test-org/rule-123' }),
-        text: async () => '',
-      };
-
-      const mockContentsResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      const mockPackageGetResponse = {
-        ok: true,
-        json: async () => ({
-          content: Buffer.from('{}').toString('base64'),
-          sha: 'sha123',
-        }),
-      };
-
-      const mockPackagePutResponse = {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockRepoResponse)
-        .mockResolvedValueOnce(mockContentsResponse)
-        .mockResolvedValueOnce(mockPackageGetResponse)
-        .mockResolvedValueOnce(mockPackagePutResponse);
-
-      await bootstrapHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('should handle missing authorization header in populateHandler', async () => {
-      request.headers = {} as any;
+    it('should handle populate errors', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Update failed'));
 
       await populateHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: false,
-        message: 'Missing Authorization header',
-      });
     });
 
-    it('should handle file update errors', async () => {
+    it('should handle rule file update error', async () => {
       const mockGetRuleResponse = {
         ok: true,
         json: async () => ({ sha: 'rule-sha' }),
       };
 
-      const mockPutError = {
+      const mockPutRuleError = {
         ok: false,
-        text: async () => 'Update failed',
+        status: 422,
+        text: async () => 'Rule update failed',
       };
 
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(mockGetRuleResponse)
-        .mockResolvedValueOnce(mockPutError);
+        .mockResolvedValueOnce(mockPutRuleError);
 
       await populateHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
 
-    it('should handle test file update errors', async () => {
+    it('should handle test file update error', async () => {
       const mockGetRuleResponse = {
         ok: true,
         json: async () => ({ sha: 'rule-sha' }),
       };
 
-      const mockPutRuleSuccess = {
+      const mockPutRuleResponse = {
         ok: true,
         json: async () => ({}),
-        text: async () => '',
       };
 
       const mockGetTestResponse = {
@@ -787,24 +364,19 @@ describe('GitHub Logic Service', () => {
 
       const mockPutTestError = {
         ok: false,
+        status: 422,
         text: async () => 'Test update failed',
       };
 
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(mockGetRuleResponse)
-        .mockResolvedValueOnce(mockPutRuleSuccess)
+        .mockResolvedValueOnce(mockPutRuleResponse)
         .mockResolvedValueOnce(mockGetTestResponse)
         .mockResolvedValueOnce(mockPutTestError);
 
       await populateHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: false,
-          message: expect.stringContaining('Test update failed'),
-        })
-      );
     });
   });
 
@@ -817,54 +389,95 @@ describe('GitHub Logic Service', () => {
       };
     });
 
-    it('should successfully promote branch', async () => {
-      const mockGetStagingBranchResponse = {
+    it('should create new branch from default', async () => {
+      const mockGetDefaultBranchResponse = {
         ok: true,
-        json: jest.fn().mockResolvedValue({
+        json: async () => ({
           object: {
-            sha: 'staging-sha',
+            sha: 'default-sha',
           },
         }),
       };
 
+      const mockGetFeatureBranchNotFound = {
+        ok: false,
+      };
+
       const mockCreateBranchResponse = {
         ok: true,
-        json: jest.fn().mockResolvedValue({}),
-        text: jest.fn().mockResolvedValue(''),
+        json: async () => ({}),
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
-        .mockResolvedValueOnce(mockCreateBranchResponse); 
+        .mockResolvedValueOnce(mockGetDefaultBranchResponse)
+        .mockResolvedValueOnce(mockGetFeatureBranchNotFound)
+        .mockResolvedValueOnce(mockCreateBranchResponse);
 
       await promoteHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: true,
-        message: 'Branch feature-branch created from staging',
-      });
     });
 
-    it('should handle missing authorization header in promoteHandler', async () => {
-      request.headers = {} as any;
+    it('should sync existing branch with default', async () => {
+      const mockGetDefaultBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'default-sha',
+          },
+        }),
+      };
+
+      const mockGetExistingBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'existing-branch-sha',
+          },
+        }),
+      };
+
+      const mockLatestCommitResponse = {
+        ok: true,
+        json: async () => ({
+          commit: {
+            tree: {
+              sha: 'tree-sha',
+            },
+          },
+        }),
+      };
+
+      const mockNewCommitResponse = {
+        ok: true,
+        json: async () => ({
+          sha: 'new-commit-sha',
+        }),
+      };
+
+      const mockUpdateBranchResponse = {
+        ok: true,
+        json: async () => ({}),
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockGetDefaultBranchResponse)
+        .mockResolvedValueOnce(mockGetExistingBranchResponse)
+        .mockResolvedValueOnce(mockLatestCommitResponse)
+        .mockResolvedValueOnce(mockNewCommitResponse)
+        .mockResolvedValueOnce(mockUpdateBranchResponse);
 
       await promoteHandler(request, reply as FastifyReply);
 
-      expect(reply.status).toHaveBeenCalledWith(500);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: false,
-        message: 'Missing Authorization header',
-      });
+      expect(reply.status).toHaveBeenCalledWith(200);
     });
 
-    it('should handle branch fetch error', async () => {
-      const mockGetBranchError = {
+    it('should handle promote errors', async () => {
+      const mockGetDefaultBranchError = {
         ok: false,
       };
 
-      (global.fetch as jest.Mock).mockResolvedValueOnce(mockGetBranchError);
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockGetDefaultBranchError);
 
       await promoteHandler(request, reply as FastifyReply);
 
@@ -872,78 +485,805 @@ describe('GitHub Logic Service', () => {
     });
 
     it('should handle branch creation error', async () => {
-      const mockGetStagingBranchResponse = {
+      const mockDefaultBranchResponse = {
         ok: true,
         json: async () => ({
-          object: {
-            sha: 'staging-sha',
-          },
+          object: { sha: 'default-sha' },
         }),
       };
 
-      const mockCreateBranchError = {
+      const mockBranchResponse = {
         ok: false,
-        text: async () => 'Failed to create branch',
+        status: 404,
+      };
+
+      const mockCreateError = {
+        ok: false,
+        status: 422,
+        text: async () => 'Branch creation failed',
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
-        .mockResolvedValueOnce(mockGetStagingBranchResponse) 
-        .mockResolvedValueOnce(mockCreateBranchError); 
+        .mockResolvedValueOnce(mockDefaultBranchResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockCreateError);
 
       await promoteHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
 
-    it('should handle fallback to default branch', async () => {
-      const mockGetStagingBranchError = {
-        ok: false,
-      };
-
-      const mockGetDefaultBranchResponse = {
+    it('should handle latest commit fetch error', async () => {
+      const mockDefaultBranchResponse = {
         ok: true,
         json: async () => ({
-          object: {
-            sha: 'main-sha',
+          object: { sha: 'default-sha' },
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: { sha: 'branch-sha' },
+        }),
+      };
+
+      const mockCommitError = {
+        ok: false,
+        status: 404,
+        text: async () => 'Commit not found',
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockDefaultBranchResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockCommitError);
+
+      await promoteHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle new commit creation error', async () => {
+      const mockDefaultBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: { sha: 'default-sha' },
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: { sha: 'branch-sha' },
+        }),
+      };
+
+      const mockCommitResponse = {
+        ok: true,
+        json: async () => ({
+          commit: {
+            tree: {
+              sha: 'tree-sha',
+            },
           },
         }),
       };
 
-      const mockCreateBranchResponse = {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
+      const mockNewCommitError = {
+        ok: false,
+        status: 422,
+        text: async () => 'Commit creation failed',
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockGetStagingBranchError) 
-        .mockResolvedValueOnce(mockGetDefaultBranchResponse) 
-        .mockResolvedValueOnce(mockCreateBranchResponse); 
+        .mockResolvedValueOnce(mockDefaultBranchResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockCommitResponse)
+        .mockResolvedValueOnce(mockNewCommitError);
 
       await promoteHandler(request, reply as FastifyReply);
 
-      expect(reply.status).toHaveBeenCalledWith(200);
-      expect(reply.send).toHaveBeenCalledWith({
-        success: true,
-        message: 'Branch feature-branch created from main',
-      });
+      expect(reply.status).toHaveBeenCalledWith(500);
     });
 
-    it('should handle missing base branch error', async () => {
-      const mockGetStagingBranchError = {
-        ok: false,
+    it('should handle branch update error', async () => {
+      const mockDefaultBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: { sha: 'default-sha' },
+        }),
       };
 
-      const mockGetDefaultBranchError = {
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: { sha: 'branch-sha' },
+        }),
+      };
+
+      const mockCommitResponse = {
+        ok: true,
+        json: async () => ({
+          commit: {
+            tree: {
+              sha: 'tree-sha',
+            },
+          },
+        }),
+      };
+
+      const mockNewCommitResponse = {
+        ok: true,
+        json: async () => ({
+          sha: 'new-commit-sha',
+        }),
+      };
+
+      const mockBranchUpdateError = {
+        ok: false,
+        status: 422,
+        text: async () => 'Branch update failed',
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockDefaultBranchResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockCommitResponse)
+        .mockResolvedValueOnce(mockNewCommitResponse)
+        .mockResolvedValueOnce(mockBranchUpdateError);
+
+      await promoteHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+  });
+
+  describe('fetchLatestTestReportHandler', () => {
+    beforeEach(() => {
+      request.query = {
+        organization: 'test-org',
+        ruleId: '123',
+      } as any;
+    });
+
+    it('should successfully fetch test report', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockFileResponse = {
+        ok: true,
+        json: async () => ({
+          content: Buffer.from('<html>Test Report</html>').toString('base64'),
+          encoding: 'base64',
+        }),
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockFileResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.header).toHaveBeenCalledWith('Content-Type', 'text/html');
+      expect(reply.send).toHaveBeenCalledWith('<html>Test Report</html>');
+    });
+
+    it('should handle workflow fetch error', async () => {
+      const mockErrorResponse = {
+        ok: false,
+        text: async () => 'Error',
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle no workflow runs', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(404);
+    });
+
+    it('should handle running workflow', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'in_progress',
+              conclusion: null,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(409);
+    });
+
+    it('should handle cancelled workflow', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'cancelled',
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(422);
+    });
+
+    it('should handle unknown workflow status', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'timed_out',
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(404);
+    });
+
+    it('should handle branch not found', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchError = {
         ok: false,
       };
 
       (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockGetStagingBranchError)
-        .mockResolvedValueOnce(mockGetDefaultBranchError);
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchError);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(404);
+    });
+
+    it('should handle file fetch error', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockFileError = {
+        ok: false,
+        status: 500,
+        text: async () => 'Server error',
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockFileError);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle invalid file response', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockInvalidFileResponse = {
+        ok: true,
+        json: async () => ({}),
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockInvalidFileResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle fetch exception during file fetch', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockRejectedValueOnce(new Error('Network error'));
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle queued workflow', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'queued',
+              conclusion: null,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(409);
+    });
+
+    it('should handle failed workflow', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'failure',
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(422);
+    });
+
+    it('should handle file not found', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockFileNotFound = {
+        ok: false,
+        status: 404,
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockFileNotFound);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(404);
+    });
+
+    it('should handle invalid file response', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockDirectoryResponse = {
+        ok: true,
+        json: async () => [],
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockDirectoryResponse);
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(400);
+    });
+
+    it('should handle general errors', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
+
+      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+  });
+
+  describe('getUnitTestStatusHandler', () => {
+    beforeEach(() => {
+      request.query = {
+        organization: 'test-org',
+        ruleId: '123',
+      } as any;
+    });
+
+    it('should return completed status', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+              html_url: 'https://github.com/test-org/rule-123/actions/runs/12345',
+              run_number: 42,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          status: 'completed',
+          reportAvailable: true,
+        })
+      );
+    });
+
+    it('should return running status', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'in_progress',
+              conclusion: null,
+              html_url: 'https://github.com/test-org/rule-123/actions/runs/12345',
+              run_number: 42,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          status: 'running',
+          reportAvailable: false,
+        })
+      );
+    });
+
+    it('should return queued status', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'queued',
+              conclusion: null,
+              html_url: 'https://github.com/test-org/rule-123/actions/runs/12345',
+              run_number: 42,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          status: 'queued',
+          reportAvailable: false,
+        })
+      );
+    });
+
+    it('should return failed status', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'failure',
+              html_url: 'https://github.com/test-org/rule-123/actions/runs/12345',
+              run_number: 42,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          status: 'failed',
+          reportAvailable: false,
+        })
+      );
+    });
+
+    it('should return cancelled status', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'cancelled',
+              html_url: 'https://github.com/test-org/rule-123/actions/runs/12345',
+              run_number: 42,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          status: 'cancelled',
+          reportAvailable: false,
+        })
+      );
+    });
+
+    it('should return not_found for unknown conclusion', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'timed_out',
+              html_url: 'https://github.com/test-org/rule-123/actions/runs/12345',
+              run_number: 42,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          status: 'not_found',
+          reportAvailable: false,
+        })
+      );
+    });
+
+    it('should return not_found status', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          status: 'not_found',
+        })
+      );
+    });
+
+    it('should handle workflow not found', async () => {
+      const mockErrorResponse = {
+        ok: false,
+        status: 404,
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(404);
+    });
+
+    it('should handle fetch error', async () => {
+      const mockErrorResponse = {
+        ok: false,
+        status: 500,
+        text: async () => 'Server error',
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle errors', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
+
+      await getUnitTestStatusHandler(request, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });

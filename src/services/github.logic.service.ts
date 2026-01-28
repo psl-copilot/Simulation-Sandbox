@@ -28,22 +28,6 @@ function isGitHubFileResponse(data: unknown): data is GitHubFileResponse {
   );
 }
 
-function getGitHubTokenFromRequest(request: FastifyRequest): string {
-  const authHeader = request.headers.authorization;
-
-  if (!authHeader) {
-    throw new Error('Missing Authorization header');
-  }
-
-  const [scheme, token] = authHeader.split(' ');
-
-  if (scheme !== 'Bearer' || !token) {
-    throw new Error('Invalid Authorization header format');
-  }
-
-  return token;
-}
-
 const getGitHubApiConfig = (token: string): { api: string; headers: Record<string, string> } => ({
   api: 'https://api.github.com',
   headers: {
@@ -66,8 +50,7 @@ export const bootstrapHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const token = getGitHubTokenFromRequest(request);
-    const { api, headers } = getGitHubApiConfig(token);
+    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
 
     const { ruleId, ruleVersion, organization } = request.body as BootstrapBody;
     const repo = getRepoName(ruleId);
@@ -113,8 +96,7 @@ export const populateHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const token = getGitHubTokenFromRequest(request);
-    const { api, headers } = getGitHubApiConfig(token);
+    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
 
     const { organization, ruleId, ruleCode, testCode } = request.body as PopulateBody;
 
@@ -172,27 +154,23 @@ export const promoteHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const token = getGitHubTokenFromRequest(request);
-    const { api, headers } = getGitHubApiConfig(token);
+    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
 
     const { organization, ruleId, branchName } = request.body as PromoteBody;
 
     const repo = getRepoName(ruleId);
 
-    const baseBranch = (await getBranchSha(organization, repo, 'staging', headers))
-      ? 'staging'
-      : configuration.GITHUB_DEFAULT_BRANCH;
-
-    const baseSha = await getBranchSha(organization, repo, baseBranch, headers);
-
-    if (!baseSha) {
-      throw new Error(`Base branch "${baseBranch}" not found`);
-    }
+    const baseSha = await getBranchSha(
+      organization,
+      repo,
+      configuration.GITHUB_DEFAULT_BRANCH,
+      headers
+    );
 
     const existingBranchSha = await getBranchSha(organization, repo, branchName, headers);
 
     if (existingBranchSha) {
-      const newCommitMessage = `Sync ${branchName} with latest commit from ${baseBranch}`;
+      const newCommitMessage = `Sync ${branchName} with latest commit from ${baseSha}`;
 
       const latestCommitRes = await fetch(
         `${api}/repos/${organization}/${repo}/commits/${baseSha}`,
@@ -241,7 +219,7 @@ export const promoteHandler = async (
       }
 
       loggerService.log(
-        `Synchronized branch ${branchName} with the latest commit from ${baseBranch} in ${organization}/${repo}`
+        `Synchronized branch ${branchName} with the latest commit from ${baseSha} in ${organization}/${repo}`
       );
     } else {
       const createRes = await fetch(`${api}/repos/${organization}/${repo}/git/refs`, {
@@ -257,14 +235,12 @@ export const promoteHandler = async (
         throw new Error(await createRes.text());
       }
 
-      loggerService.log(
-        `Created branch ${branchName} from ${baseBranch} in ${organization}/${repo}`
-      );
+      loggerService.log(`Created branch ${branchName} from ${baseSha} in ${organization}/${repo}`);
     }
 
     reply.status(200).send({
       success: true,
-      message: `Branch ${branchName} is synchronized with ${baseBranch}`,
+      message: `Branch ${branchName} is synchronized with ${baseSha}`,
     });
   } catch (error) {
     handleError(error, reply);
@@ -276,8 +252,7 @@ export const fetchLatestTestReportHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const token = getGitHubTokenFromRequest(request);
-    const { api, headers } = getGitHubApiConfig(token);
+    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
 
     const { organization, ruleId, branchName } = request.query as FetchLatestTestReportQuery;
 
@@ -532,8 +507,7 @@ export const getUnitTestStatusHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const token = getGitHubTokenFromRequest(request);
-    const { api, headers } = getGitHubApiConfig(token);
+    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
 
     const { organization, ruleId, branchName } = request.query as {
       organization: string;

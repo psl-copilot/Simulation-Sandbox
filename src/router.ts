@@ -26,6 +26,7 @@ import {
 import { SetOptionsBodyAndParams } from './utils/schema-utils';
 
 function Routes(fastify: FastifyInstance): void {
+  // Public
   fastify.get('/', handleHealthCheck);
   fastify.get('/health', handleHealthCheck);
 
