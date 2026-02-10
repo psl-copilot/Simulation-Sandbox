@@ -287,7 +287,7 @@ export const fetchLatestTestReportHandler = async (
     const { status } = normalizeUnitTestStatus(latestRun);
 
     if (status === 'queued' || status === 'running') {
-      return await reply.status(409).send({
+      return await reply.status(201).send({
         success: false,
         message: `Unit tests are still ${status}. Report is not available yet.`,
       });
