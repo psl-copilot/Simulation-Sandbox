@@ -2,7 +2,6 @@ import { Type, type Static } from '@sinclair/typebox';
 
 export type PromoteBody = Static<typeof PromoteBodySchema>;
 export const PromoteBodySchema = Type.Object({
-  organization: Type.String(),
   ruleId: Type.String(),
   branchName: Type.String(),
 });

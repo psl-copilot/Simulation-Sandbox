@@ -26,7 +26,6 @@ jest.mock('../../src/index', () => {
 
   return {
     configuration: {
-      GITHUB_TEMPLATE_OWNER: 'template-owner',
       GITHUB_TEMPLATE_REPO: 'template-repo',
       GITHUB_DEFAULT_BRANCH: 'main',
       GITHUB_TEST_REPORT_PATH: 'coverage/lcov-report/index.html',

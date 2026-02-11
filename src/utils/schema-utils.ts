@@ -11,7 +11,8 @@ export const SetOptionsBodyAndParams = (
   handler: RouteHandlerMethod,
   bodySchema?: TSchema,
   querySchema?: TSchema,
-  responseSchema?: TSchema
+  responseSchema?: TSchema,
+  additionalPreHandlers?: PreHandler[]
 ): {
   preHandler: PreHandler[];
   handler: RouteHandlerMethod;
@@ -19,8 +20,10 @@ export const SetOptionsBodyAndParams = (
 } => {
   loggerService.debug(`Auth ENABLED for ${handler.name}`);
 
+  const preHandlers = [tokenHandler, ...(additionalPreHandlers ?? [])];
+
   return {
-    preHandler: [tokenHandler],
+    preHandler: preHandlers,
     handler,
     schema: {
       ...(querySchema && { querystring: querySchema }),

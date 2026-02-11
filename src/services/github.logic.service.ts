@@ -29,13 +29,29 @@ function isGitHubFileResponse(data: unknown): data is GitHubFileResponse {
 }
 
 const getGitHubApiConfig = (token: string): { api: string; headers: Record<string, string> } => ({
-  api: 'https://api.github.com',
+  api: configuration.GITHUB_API_URL,
   headers: {
     Authorization: `token ${token}`,
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
   },
 });
+
+const getTokenFromHeaders = (request: FastifyRequest): string => {
+  const token = request.headers.de_gh_token as string;
+  if (!token) {
+    throw new Error('GitHub token not found in request headers');
+  }
+  return token;
+};
+
+const getOrganizationFromHeaders = (request: FastifyRequest): string => {
+  const organization = request.headers.organization_name as string;
+  if (!organization) {
+    throw new Error('Organization name not found in request headers');
+  }
+  return organization;
+};
 
 const getRepoName = (ruleId: string): string => `rule-${ruleId}`;
 
@@ -50,9 +66,11 @@ export const bootstrapHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
+    const token = getTokenFromHeaders(request);
+    const organization = getOrganizationFromHeaders(request);
+    const { api, headers } = getGitHubApiConfig(token);
 
-    const { ruleId, ruleVersion, organization } = request.body as BootstrapBody;
+    const { ruleId, ruleVersion } = request.body as BootstrapBody;
     const repo = getRepoName(ruleId);
 
     const createRes = await fetch(
@@ -96,9 +114,11 @@ export const populateHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
+    const token = getTokenFromHeaders(request);
+    const organization = getOrganizationFromHeaders(request);
+    const { api, headers } = getGitHubApiConfig(token);
 
-    const { organization, ruleId, ruleCode, testCode } = request.body as PopulateBody;
+    const { ruleId, ruleCode, testCode } = request.body as PopulateBody;
 
     const repo = getRepoName(ruleId);
     const branch = configuration.GITHUB_DEFAULT_BRANCH;
@@ -154,9 +174,11 @@ export const promoteHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
+    const token = getTokenFromHeaders(request);
+    const organization = getOrganizationFromHeaders(request);
+    const { api, headers } = getGitHubApiConfig(token);
 
-    const { organization, ruleId, branchName } = request.body as PromoteBody;
+    const { ruleId, branchName } = request.body as PromoteBody;
 
     const repo = getRepoName(ruleId);
 
@@ -252,9 +274,11 @@ export const fetchLatestTestReportHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
+    const token = getTokenFromHeaders(request);
+    const organization = getOrganizationFromHeaders(request);
+    const { api, headers } = getGitHubApiConfig(token);
 
-    const { organization, ruleId, branchName } = request.query as FetchLatestTestReportQuery;
+    const { ruleId, branchName } = request.query as FetchLatestTestReportQuery;
 
     const repo = getRepoName(ruleId);
     const branch = branchName ?? configuration.GITHUB_DEFAULT_BRANCH;
@@ -377,7 +401,7 @@ async function copyTemplateFiles(
 ): Promise<void> {
   const repo = getRepoName(ruleId);
   const branch = configuration.GITHUB_DEFAULT_BRANCH;
-  const api = 'https://api.github.com';
+  const api = configuration.GITHUB_API_URL;
   const packagePath = 'package.json';
 
   const getRes = await fetch(
@@ -427,7 +451,7 @@ async function waitForRepoContent(
   retries = 15,
   delayMs = 1000
 ): Promise<void> {
-  const api = 'https://api.github.com';
+  const api = configuration.GITHUB_API_URL;
 
   const res = await fetch(`${api}/repos/${organization}/${repo}/contents`, { headers });
 
@@ -452,7 +476,7 @@ async function getFileSha(
   headers: Record<string, string>
 ): Promise<string | undefined> {
   const res = await fetch(
-    `https://api.github.com/repos/${org}/${repo}/contents/${path}?ref=${branch}`,
+    `${configuration.GITHUB_API_URL}/repos/${org}/${repo}/contents/${path}?ref=${branch}`,
     { headers }
   );
 
@@ -468,9 +492,12 @@ async function getBranchSha(
   branch: string,
   headers: Record<string, string>
 ): Promise<string | undefined> {
-  const res = await fetch(`https://api.github.com/repos/${org}/${repo}/git/ref/heads/${branch}`, {
-    headers,
-  });
+  const res = await fetch(
+    `${configuration.GITHUB_API_URL}/repos/${org}/${repo}/git/ref/heads/${branch}`,
+    {
+      headers,
+    }
+  );
 
   if (!res.ok) return undefined;
 
@@ -507,10 +534,11 @@ export const getUnitTestStatusHandler = async (
   reply: FastifyReply
 ): Promise<void> => {
   try {
-    const { api, headers } = getGitHubApiConfig(configuration.GH_TOKEN);
+    const token = getTokenFromHeaders(request);
+    const organization = getOrganizationFromHeaders(request);
+    const { api, headers } = getGitHubApiConfig(token);
 
-    const { organization, ruleId, branchName } = request.query as {
-      organization: string;
+    const { ruleId, branchName } = request.query as {
       ruleId: string;
       branchName?: string;
     };

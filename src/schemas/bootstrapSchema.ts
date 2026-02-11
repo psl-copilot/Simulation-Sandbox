@@ -4,7 +4,6 @@ export type BootstrapBody = Static<typeof BootstrapBodySchema>;
 export const BootstrapBodySchema = Type.Object({
   ruleId: Type.String(),
   ruleVersion: Type.String(),
-  organization: Type.String(),
 });
 
 export type BootstrapResponse = Static<typeof BootstrapResponseSchema>;

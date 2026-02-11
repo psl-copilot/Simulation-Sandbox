@@ -2,7 +2,6 @@ import { type Static, Type, type TSchema } from '@sinclair/typebox';
 
 export type UnitTestStatusQuery = Static<typeof UnitTestStatusQuerySchema>;
 export const UnitTestStatusQuerySchema: TSchema = Type.Object({
-  organization: Type.String(),
   ruleId: Type.String(),
   branchName: Type.Optional(Type.String()),
 });

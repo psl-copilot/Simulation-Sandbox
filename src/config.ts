@@ -14,27 +14,27 @@ dotenv.config({
 export type Configuration = ProcessorConfig & IConfig;
 
 export interface IConfig {
-  GH_TOKEN: string;
+  GITHUB_API_URL: string;
+  GITHUB_TEMPLATE_OWNER: string;
   GITHUB_DEFAULT_BRANCH: string;
   GITHUB_TEMPLATE_REPO: string;
-  GITHUB_TEMPLATE_OWNER: string;
   GITHUB_TEST_REPORT_PATH: string;
   PORT: number;
 }
 
 export const additionalEnvironmentVariables: AdditionalConfig[] = [
   {
-    name: 'GH_TOKEN',
-    type: 'string',
-    optional: false,
-  },
-  {
-    name: 'GITHUB_DEFAULT_BRANCH',
+    name: 'GITHUB_API_URL',
     type: 'string',
     optional: false,
   },
   {
     name: 'GITHUB_TEMPLATE_OWNER',
+    type: 'string',
+    optional: false,
+  },
+  {
+    name: 'GITHUB_DEFAULT_BRANCH',
     type: 'string',
     optional: false,
   },

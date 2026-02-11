@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { FastifyInstance } from 'fastify';
 import { handleHealthCheck } from './app.controller';
+import { tokenMiddleware } from './utils/helper';
 
 import {
   bootstrapHandler,
@@ -30,45 +31,56 @@ function Routes(fastify: FastifyInstance): void {
   fastify.get('/', handleHealthCheck);
   fastify.get('/health', handleHealthCheck);
 
-  fastify.post('/v1/bootstrap', {
-    ...SetOptionsBodyAndParams(
+  fastify.post(
+    '/v1/bootstrap',
+    SetOptionsBodyAndParams(
       bootstrapHandler,
       BootstrapBodySchema,
       undefined,
-      BootstrapResponseSchema
-    ),
-  });
+      BootstrapResponseSchema,
+      [tokenMiddleware]
+    )
+  );
 
-  fastify.post('/v1/populate', {
-    ...SetOptionsBodyAndParams(
+  fastify.post(
+    '/v1/populate',
+    SetOptionsBodyAndParams(
       populateHandler,
       PopulateBodySchema,
       undefined,
-      PopulateResponseSchema
-    ),
-  });
+      PopulateResponseSchema,
+      [tokenMiddleware]
+    )
+  );
 
-  fastify.post('/v1/promote', {
-    ...SetOptionsBodyAndParams(promoteHandler, PromoteBodySchema, undefined, PromoteResponseSchema),
-  });
+  fastify.post(
+    '/v1/promote',
+    SetOptionsBodyAndParams(promoteHandler, PromoteBodySchema, undefined, PromoteResponseSchema, [
+      tokenMiddleware,
+    ])
+  );
 
-  fastify.get('/v1/report', {
-    ...SetOptionsBodyAndParams(
+  fastify.get(
+    '/v1/report',
+    SetOptionsBodyAndParams(
       fetchLatestTestReportHandler,
       undefined,
       FetchLatestTestReportQuerySchema,
-      FetchLatestTestReportResponseSchema
-    ),
-  });
+      FetchLatestTestReportResponseSchema,
+      [tokenMiddleware]
+    )
+  );
 
-  fastify.get('/v1/unit-tests/status', {
-    ...SetOptionsBodyAndParams(
+  fastify.get(
+    '/v1/unit-tests/status',
+    SetOptionsBodyAndParams(
       getUnitTestStatusHandler,
       undefined,
       UnitTestStatusQuerySchema,
-      UnitTestStatusResponseSchema
-    ),
-  });
+      UnitTestStatusResponseSchema,
+      [tokenMiddleware]
+    )
+  );
 }
 
 export default Routes;
