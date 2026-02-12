@@ -10,7 +10,6 @@ const { ENCRYPTION_KEY, ENCRYPTION_IV } = process.env;
 if (!ENCRYPTION_KEY) {
   throw new Error('ENCRYPTION_KEY is not defined');
 }
-
 if (!ENCRYPTION_IV) {
   throw new Error('ENCRYPTION_IV is not defined');
 }
@@ -21,7 +20,6 @@ const iv = Buffer.from(ENCRYPTION_IV, 'utf8');
 if (key.length !== 32) {
   throw new Error('ENCRYPTION_KEY must be 32 bytes');
 }
-
 if (iv.length !== 16) {
   throw new Error('ENCRYPTION_IV must be 16 bytes (32 hex chars)');
 }
@@ -34,23 +32,6 @@ interface JWTPayload {
 interface TenantCredentials {
   token: string;
   organizationName: string;
-}
-
-export function decodeJWT(token: string): JWTPayload {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) {
-      throw new Error('Invalid JWT format');
-    }
-    const [, payload] = parts;
-    const decoded = Buffer.from(payload, 'base64').toString('utf8');
-    return JSON.parse(decoded) as JWTPayload;
-  } catch (error) {
-    throw new Error(
-      `Failed to decode JWT: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      { cause: error }
-    );
-  }
 }
 
 export function encrypt(text: string): string {
@@ -79,8 +60,24 @@ export function getTenantToken(tenantId: string): TenantCredentials {
     const decryptedToken = decrypt(encryptedToken);
     return { token: decryptedToken, organizationName };
   } catch (error) {
-    // For testing: if decryption fails, treat the token as plain text
     return { token: encryptedToken, organizationName };
+  }
+}
+
+export function decodeJWT(token: string): JWTPayload {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      throw new Error('Invalid JWT format');
+    }
+    const [, payload] = parts;
+    const decoded = Buffer.from(payload, 'base64').toString('utf8');
+    return JSON.parse(decoded) as JWTPayload;
+  } catch (error) {
+    throw new Error(
+      `Failed to decode JWT: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      { cause: error }
+    );
   }
 }
 
@@ -92,17 +89,14 @@ export async function tokenMiddleware(request: FastifyRequest, reply: FastifyRep
       return await reply.status(401).send({ error: 'Authorization header is required' });
     }
 
-    // Extract Bearer token
-    // Validate format without complex regex to avoid unicode-regexp requirement
     if (!authHeader.toLowerCase().startsWith('bearer ')) {
       return await reply
         .status(401)
         .send({ error: 'Invalid authorization format. Use: Bearer <token>' });
     }
 
-    const bearerToken = authHeader.slice(7).trim(); // Remove 'Bearer ' prefix
+    const bearerToken = authHeader.slice(7).trim();
 
-    // Validate JWT format (three base64url parts separated by dots)
     const jwtParts = bearerToken.split('.');
     if (jwtParts.length !== 3 || jwtParts.some((part) => part.length === 0)) {
       return await reply
@@ -110,7 +104,6 @@ export async function tokenMiddleware(request: FastifyRequest, reply: FastifyRep
         .send({ error: 'Invalid authorization format. Use: Bearer <token>' });
     }
 
-    // Decode JWT to extract tenantId
     const payload = decodeJWT(bearerToken);
 
     if (!payload.tenantId) {
@@ -119,10 +112,8 @@ export async function tokenMiddleware(request: FastifyRequest, reply: FastifyRep
 
     const { tenantId } = payload;
 
-    // Get decrypted GitHub token and organization name
     const { token, organizationName } = getTenantToken(tenantId);
 
-    // Add credentials to request headers for handler access
     Object.assign(request.headers, {
       de_gh_token: token,
       organization_name: organizationName,
