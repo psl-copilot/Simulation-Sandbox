@@ -27,8 +27,10 @@ jest.mock('../../src/index', () => {
   return {
     configuration: {
       GITHUB_TEMPLATE_REPO: 'template-repo',
+      GITHUB_TEMPLATE_OWNER: 'template-owner',
       GITHUB_DEFAULT_BRANCH: 'main',
       GITHUB_TEST_REPORT_PATH: 'coverage/lcov-report/index.html',
+      GITHUB_API_URL: 'https://api.github.com',
       GH_TOKEN: 'test-token',
     },
     loggerService: mockLogger,
@@ -36,23 +38,27 @@ jest.mock('../../src/index', () => {
 });
 
 describe('GitHub Logic Service', () => {
-  let request: FastifyRequest;
+  let request: Partial<FastifyRequest>;
   let reply: Partial<FastifyReply>;
 
   beforeEach(() => {
     request = {
+      headers: {
+        de_gh_token: 'test-token',
+        organization_name: 'test-org',
+      },
       body: {
         organization: 'test-org',
         ruleId: '123',
         ruleVersion: '1.0.0',
       },
-    } as FastifyRequest;
+    };
 
     reply = {
       status: jest.fn().mockReturnThis(),
       send: jest.fn().mockReturnThis(),
       header: jest.fn().mockReturnThis(),
-    } as Partial<FastifyReply>;
+    };
 
     global.fetch = jest.fn();
     jest.clearAllMocks();
@@ -63,6 +69,36 @@ describe('GitHub Logic Service', () => {
   });
 
   describe('bootstrapHandler', () => {
+    it('should handle missing GitHub token', async () => {
+      request.headers = {} as any;
+
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'GitHub token not found in request headers',
+        })
+      );
+    });
+
+    it('should handle missing organization name', async () => {
+      request.headers = {
+        de_gh_token: 'test-token',
+      } as any;
+
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'Organization name not found in request headers',
+        })
+      );
+    });
+
     it('should successfully bootstrap repository', async () => {
       const mockRepoResponse = {
         ok: true,
@@ -97,9 +133,15 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockPackageGetResponse)
         .mockResolvedValueOnce(mockPackagePutResponse);
 
-      await bootstrapHandler(request, reply as FastifyReply);
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          repoUrl: 'https://github.com/test-org/rule-123',
+        })
+      );
     });
 
     it('should handle errors during bootstrap', async () => {
@@ -110,7 +152,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
 
-      await bootstrapHandler(request, reply as FastifyReply);
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -118,9 +160,15 @@ describe('GitHub Logic Service', () => {
     it('should handle non-Error exceptions', async () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce('String error');
 
-      await bootstrapHandler(request, reply as FastifyReply);
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'String error',
+        })
+      );
     });
 
     it('should handle package.json get error', async () => {
@@ -144,7 +192,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockContentsResponse)
         .mockResolvedValueOnce(mockPackageGetError);
 
-      await bootstrapHandler(request, reply as FastifyReply);
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -181,7 +229,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockPackageGetResponse)
         .mockResolvedValueOnce(mockPackagePutError);
 
-      await bootstrapHandler(request, reply as FastifyReply);
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -225,7 +273,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockPackageGetResponse)
         .mockResolvedValueOnce(mockPackagePutResponse);
 
-      await bootstrapHandler(request, reply as FastifyReply);
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
     });
@@ -247,13 +295,52 @@ describe('GitHub Logic Service', () => {
         (global.fetch as jest.Mock).mockResolvedValueOnce(mockContentsErrorResponse);
       }
 
-      await bootstrapHandler(request, reply as FastifyReply);
+      await bootstrapHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     }, 20000);
   });
 
   describe('populateHandler', () => {
+    beforeEach(() => {
+      request.body = {
+        organization: 'test-org',
+        ruleId: '123',
+        ruleCode: Buffer.from('rule code').toString('base64'),
+        testCode: Buffer.from('test code').toString('base64'),
+      };
+    });
+
+    it('should handle missing GitHub token', async () => {
+      request.headers = {} as any;
+
+      await populateHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'GitHub token not found in request headers',
+        })
+      );
+    });
+
+    it('should handle missing organization name', async () => {
+      request.headers = {
+        de_gh_token: 'test-token',
+      } as any;
+
+      await populateHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'Organization name not found in request headers',
+        })
+      );
+    });
+
     it('should successfully populate files', async () => {
       const mockGetRuleResponse = {
         ok: true,
@@ -281,7 +368,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockGetTestResponse)
         .mockResolvedValueOnce(mockPutTestResponse);
 
-      await populateHandler(request, reply as FastifyReply);
+      await populateHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
     });
@@ -311,7 +398,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockGetTestError)
         .mockResolvedValueOnce(mockPutTestResponse);
 
-      await populateHandler(request, reply as FastifyReply);
+      await populateHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
     });
@@ -319,7 +406,7 @@ describe('GitHub Logic Service', () => {
     it('should handle populate errors', async () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Update failed'));
 
-      await populateHandler(request, reply as FastifyReply);
+      await populateHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -340,7 +427,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockGetRuleResponse)
         .mockResolvedValueOnce(mockPutRuleError);
 
-      await populateHandler(request, reply as FastifyReply);
+      await populateHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -373,7 +460,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockGetTestResponse)
         .mockResolvedValueOnce(mockPutTestError);
 
-      await populateHandler(request, reply as FastifyReply);
+      await populateHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -386,6 +473,36 @@ describe('GitHub Logic Service', () => {
         ruleId: '123',
         branchName: 'feature-branch',
       };
+    });
+
+    it('should handle missing GitHub token', async () => {
+      request.headers = {} as any;
+
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'GitHub token not found in request headers',
+        })
+      );
+    });
+
+    it('should handle missing organization name', async () => {
+      request.headers = {
+        de_gh_token: 'test-token',
+      } as any;
+
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'Organization name not found in request headers',
+        })
+      );
     });
 
     it('should create new branch from default', async () => {
@@ -412,7 +529,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockGetFeatureBranchNotFound)
         .mockResolvedValueOnce(mockCreateBranchResponse);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
     });
@@ -466,7 +583,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockNewCommitResponse)
         .mockResolvedValueOnce(mockUpdateBranchResponse);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
     });
@@ -478,7 +595,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockGetDefaultBranchError);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -507,7 +624,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockBranchResponse)
         .mockResolvedValueOnce(mockCreateError);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -538,7 +655,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockBranchResponse)
         .mockResolvedValueOnce(mockCommitError);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -581,7 +698,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockCommitResponse)
         .mockResolvedValueOnce(mockNewCommitError);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -632,7 +749,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockNewCommitResponse)
         .mockResolvedValueOnce(mockBranchUpdateError);
 
-      await promoteHandler(request, reply as FastifyReply);
+      await promoteHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -644,6 +761,36 @@ describe('GitHub Logic Service', () => {
         organization: 'test-org',
         ruleId: '123',
       } as any;
+    });
+
+    it('should handle missing GitHub token', async () => {
+      request.headers = {} as any;
+
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'GitHub token not found in request headers',
+        })
+      );
+    });
+
+    it('should handle missing organization name', async () => {
+      request.headers = {
+        de_gh_token: 'test-token',
+      } as any;
+
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'Organization name not found in request headers',
+        })
+      );
     });
 
     it('should successfully fetch test report', async () => {
@@ -682,7 +829,55 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockBranchResponse)
         .mockResolvedValueOnce(mockFileResponse);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.header).toHaveBeenCalledWith('Content-Type', 'text/html');
+      expect(reply.send).toHaveBeenCalledWith('<html>Test Report</html>');
+    });
+
+    it('should successfully fetch test report with branch name', async () => {
+      request.query = {
+        organization: 'test-org',
+        ruleId: '123',
+        branchName: 'feature',
+      } as any;
+
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockFileResponse = {
+        ok: true,
+        json: async () => ({
+          content: Buffer.from('<html>Test Report</html>').toString('base64'),
+          encoding: 'base64',
+        }),
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockFileResponse);
+
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.header).toHaveBeenCalledWith('Content-Type', 'text/html');
       expect(reply.send).toHaveBeenCalledWith('<html>Test Report</html>');
@@ -696,7 +891,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -711,7 +906,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(404);
     });
@@ -732,9 +927,30 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
-      expect(reply.status).toHaveBeenCalledWith(409);
+      expect(reply.status).toHaveBeenCalledWith(201);
+    });
+
+    it('should handle queued workflow', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'queued',
+              conclusion: null,
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(201);
     });
 
     it('should handle cancelled workflow', async () => {
@@ -753,7 +969,28 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(422);
+    });
+
+    it('should handle failed workflow', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'failure',
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
+
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(422);
     });
@@ -774,7 +1011,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(404);
     });
@@ -801,7 +1038,45 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockWorkflowRunsResponse)
         .mockResolvedValueOnce(mockBranchError);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(404);
+    });
+
+    it('should handle file not found', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockFileNotFound = {
+        ok: false,
+        status: 404,
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockFileNotFound);
+
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(404);
     });
@@ -840,9 +1115,47 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockBranchResponse)
         .mockResolvedValueOnce(mockFileError);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
+    });
+
+    it('should handle directory instead of file', async () => {
+      const mockWorkflowRunsResponse = {
+        ok: true,
+        json: async () => ({
+          workflow_runs: [
+            {
+              id: 12345,
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }),
+      };
+
+      const mockBranchResponse = {
+        ok: true,
+        json: async () => ({
+          object: {
+            sha: 'branch-sha',
+          },
+        }),
+      };
+
+      const mockDirectoryResponse = {
+        ok: true,
+        json: async () => [],
+      };
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockWorkflowRunsResponse)
+        .mockResolvedValueOnce(mockBranchResponse)
+        .mockResolvedValueOnce(mockDirectoryResponse);
+
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(400);
     });
 
     it('should handle invalid file response', async () => {
@@ -878,7 +1191,7 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockBranchResponse)
         .mockResolvedValueOnce(mockInvalidFileResponse);
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -911,133 +1224,15 @@ describe('GitHub Logic Service', () => {
         .mockResolvedValueOnce(mockBranchResponse)
         .mockRejectedValueOnce(new Error('Network error'));
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
-    });
-
-    it('should handle queued workflow', async () => {
-      const mockWorkflowRunsResponse = {
-        ok: true,
-        json: async () => ({
-          workflow_runs: [
-            {
-              id: 12345,
-              status: 'queued',
-              conclusion: null,
-            },
-          ],
-        }),
-      };
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
-
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(409);
-    });
-
-    it('should handle failed workflow', async () => {
-      const mockWorkflowRunsResponse = {
-        ok: true,
-        json: async () => ({
-          workflow_runs: [
-            {
-              id: 12345,
-              status: 'completed',
-              conclusion: 'failure',
-            },
-          ],
-        }),
-      };
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
-
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(422);
-    });
-
-    it('should handle file not found', async () => {
-      const mockWorkflowRunsResponse = {
-        ok: true,
-        json: async () => ({
-          workflow_runs: [
-            {
-              id: 12345,
-              status: 'completed',
-              conclusion: 'success',
-            },
-          ],
-        }),
-      };
-
-      const mockBranchResponse = {
-        ok: true,
-        json: async () => ({
-          object: {
-            sha: 'branch-sha',
-          },
-        }),
-      };
-
-      const mockFileNotFound = {
-        ok: false,
-        status: 404,
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockWorkflowRunsResponse)
-        .mockResolvedValueOnce(mockBranchResponse)
-        .mockResolvedValueOnce(mockFileNotFound);
-
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(404);
-    });
-
-    it('should handle invalid file response', async () => {
-      const mockWorkflowRunsResponse = {
-        ok: true,
-        json: async () => ({
-          workflow_runs: [
-            {
-              id: 12345,
-              status: 'completed',
-              conclusion: 'success',
-            },
-          ],
-        }),
-      };
-
-      const mockBranchResponse = {
-        ok: true,
-        json: async () => ({
-          object: {
-            sha: 'branch-sha',
-          },
-        }),
-      };
-
-      const mockDirectoryResponse = {
-        ok: true,
-        json: async () => [],
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockWorkflowRunsResponse)
-        .mockResolvedValueOnce(mockBranchResponse)
-        .mockResolvedValueOnce(mockDirectoryResponse);
-
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
-
-      expect(reply.status).toHaveBeenCalledWith(400);
     });
 
     it('should handle general errors', async () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
 
-      await fetchLatestTestReportHandler(request, reply as FastifyReply);
+      await fetchLatestTestReportHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -1049,6 +1244,36 @@ describe('GitHub Logic Service', () => {
         organization: 'test-org',
         ruleId: '123',
       } as any;
+    });
+
+    it('should handle missing GitHub token', async () => {
+      request.headers = {} as any;
+
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'GitHub token not found in request headers',
+        })
+      );
+    });
+
+    it('should handle missing organization name', async () => {
+      request.headers = {
+        de_gh_token: 'test-token',
+      } as any;
+
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          message: 'Organization name not found in request headers',
+        })
+      );
     });
 
     it('should return completed status', async () => {
@@ -1069,7 +1294,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
       expect(reply.send).toHaveBeenCalledWith(
@@ -1099,7 +1324,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
       expect(reply.send).toHaveBeenCalledWith(
@@ -1129,7 +1354,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
       expect(reply.send).toHaveBeenCalledWith(
@@ -1159,7 +1384,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
       expect(reply.send).toHaveBeenCalledWith(
@@ -1189,7 +1414,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
       expect(reply.send).toHaveBeenCalledWith(
@@ -1219,7 +1444,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
       expect(reply.send).toHaveBeenCalledWith(
@@ -1231,7 +1456,7 @@ describe('GitHub Logic Service', () => {
       );
     });
 
-    it('should return not_found status', async () => {
+    it('should return not_found status when no runs', async () => {
       const mockWorkflowRunsResponse = {
         ok: true,
         json: async () => ({
@@ -1241,7 +1466,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockWorkflowRunsResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(200);
       expect(reply.send).toHaveBeenCalledWith(
@@ -1260,7 +1485,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(404);
     });
@@ -1274,7 +1499,7 @@ describe('GitHub Logic Service', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });
@@ -1282,7 +1507,7 @@ describe('GitHub Logic Service', () => {
     it('should handle errors', async () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
 
-      await getUnitTestStatusHandler(request, reply as FastifyReply);
+      await getUnitTestStatusHandler(request as FastifyRequest, reply as FastifyReply);
 
       expect(reply.status).toHaveBeenCalledWith(500);
     });

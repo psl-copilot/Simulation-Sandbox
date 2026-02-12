@@ -2,10 +2,7 @@
 import { decode } from 'jsonwebtoken';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { loggerService } from '..';
-
-interface JwtPayloadWithClaims {
-  claims?: string[];
-}
+import type { JwtPayloadWithClaims } from '../interfaces/index';
 
 export const tokenHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
   const logContext = 'tokenHandler()';

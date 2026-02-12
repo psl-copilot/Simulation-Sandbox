@@ -1,4 +1,12 @@
-export type GitHubWorkflowRunStatus = 'queued' | 'in_progress' | 'completed';
+type GitHubWorkflowRunStatus = 'queued' | 'in_progress' | 'completed';
+
+type GitHubWorkflowConclusion =
+  | 'success'
+  | 'failure'
+  | 'cancelled'
+  | 'skipped'
+  | 'timed_out'
+  | null;
 
 export type GitHubUnitTestStatus =
   | 'queued'
@@ -7,14 +15,6 @@ export type GitHubUnitTestStatus =
   | 'failed'
   | 'cancelled'
   | 'not_found';
-
-export type GitHubWorkflowConclusion =
-  | 'success'
-  | 'failure'
-  | 'cancelled'
-  | 'skipped'
-  | 'timed_out'
-  | null;
 
 export interface GitHubCommit {
   sha: string;

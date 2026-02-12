@@ -1,44 +1,16 @@
 import * as crypto from 'node:crypto';
-import dotenv from 'dotenv';
-import * as path from 'node:path';
+import { processorConfig as configuration } from '../config';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { TenantCredentials, JWTPayload } from '../interfaces/index';
 
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-
-const { ENCRYPTION_KEY, ENCRYPTION_IV } = process.env;
-
-if (!ENCRYPTION_KEY) {
-  throw new Error('ENCRYPTION_KEY is not defined');
-}
-if (!ENCRYPTION_IV) {
-  throw new Error('ENCRYPTION_IV is not defined');
-}
-
-const key = Buffer.from(ENCRYPTION_KEY, 'utf8');
-const iv = Buffer.from(ENCRYPTION_IV, 'utf8');
+const key = Buffer.from(configuration.ENCRYPTION_KEY, 'utf8');
+const iv = Buffer.from(configuration.ENCRYPTION_IV, 'utf8');
 
 if (key.length !== 32) {
   throw new Error('ENCRYPTION_KEY must be 32 bytes');
 }
 if (iv.length !== 16) {
   throw new Error('ENCRYPTION_IV must be 16 bytes (32 hex chars)');
-}
-
-interface JWTPayload {
-  tenantId?: string;
-  [key: string]: unknown;
-}
-
-interface TenantCredentials {
-  token: string;
-  organizationName: string;
-}
-
-export function encrypt(text: string): string {
-  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return encrypted;
 }
 
 export function decrypt(text: string): string {
