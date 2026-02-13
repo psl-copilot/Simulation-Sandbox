@@ -210,7 +210,7 @@
           }
         },
         "url": {
-          "raw": "{{baseUrlSandBox}}/api/v1/report?organization={{organization}}&ruleId={{ruleId}}&branchName={{branchName}}",
+          "raw": "{{baseUrlSandBox}}/api/v1/report?ruleId={{ruleId}}&branchName={{branchName}}",
           "host": [
             "{{baseUrlSandBox}}"
           ],
@@ -220,10 +220,6 @@
             "report"
           ],
           "query": [
-            {
-              "key": "organization",
-              "value": "{{organization}}"
-            },
             {
               "key": "ruleId",
               "value": "{{ruleId}}"
@@ -326,7 +322,7 @@
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrlSandBox}}/api/v1/unit-tests/status?organization={{organization}}&ruleId={{ruleId}}&branchName={{branchName}}",
+          "raw": "{{baseUrlSandBox}}/api/v1/unit-tests/status?ruleId={{ruleId}}&branchName={{branchName}}",
           "host": [
             "{{baseUrlSandBox}}"
           ],
@@ -337,10 +333,6 @@
             "status"
           ],
           "query": [
-            {
-              "key": "organization",
-              "value": "{{organization}}"
-            },
             {
               "key": "ruleId",
               "value": "{{ruleId}}"
